@@ -6,16 +6,39 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <string>
 #include <vector>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 
 #include "planner.h"
 
+/*
+Map format:
+
+N
+x_size,y_size
+D
+detection_radius
+R
+robotposeX,robotposeY
+B
+charge_max,charge
+K
+n_chargers
+charger_x[1],charger_y[1]
+...
+charger_x[n_chargers],charger_y[n_chargers]
+G
+goalposeX,goalposeY
+M
+grid
+*/
+
 int main(int argc, char *argv[])
 {
-    // READ PROBLEM
     if (argc != 2)
     {
         std::cout << "runtest takes exactly one command line argument: the map file" << std::endl;
@@ -31,7 +54,6 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    // read map size
     char letter;
     std::string line;
     int x_size, y_size;
@@ -44,21 +66,17 @@ int main(int argc, char *argv[])
     }
 
     myfile >> x_size >> letter >> y_size;
-    std:: cout << "map size: " << x_size << letter << y_size << std::endl;
+    std::cout << "map size: " << x_size << letter << y_size << std::endl;
 
-    // read collision threshold
-    int collision_thresh;
     myfile >> letter;
-    if (letter != 'C')
+    if (letter != 'D')
     {
         std::cout << "error parsing file" << std::endl;
         return -1;
     }
+    int detection_radius;
+    myfile >> detection_radius;
 
-    myfile >> collision_thresh;
-    std:: cout << "collision threshold: " << collision_thresh << std::endl;
-
-    // read robot position
     int robotposeX, robotposeY;
     myfile >> letter;
     if (letter != 'R')
@@ -68,34 +86,54 @@ int main(int argc, char *argv[])
     }
 
     myfile >> robotposeX >> letter >> robotposeY;
-    std:: cout << "robot pose: " << robotposeX << letter << robotposeY << std::endl;
+    std::cout << "robot pose: " << robotposeX << letter << robotposeY << std::endl;
 
-    // read trajectory
-    std::vector<std::vector<int>> traj;
-
-    do {
-        std::getline(myfile, line);
-    } while (line != "T");
-
-    while (std::getline(myfile, line) && line != "M")
+    myfile >> letter;
+    if (letter != 'B')
     {
-        std::stringstream ss(line);
-        int num1, num2;
-        ss >> num1 >> letter >> num2;
-        traj.push_back({num1, num2});
+        std::cout << "error parsing file" << std::endl;
+        return -1;
+    }
+    int charge_max;
+    int charge;
+    myfile >> charge_max >> letter >> charge;
+
+    myfile >> letter;
+    if (letter != 'K')
+    {
+        std::cout << "error parsing file" << std::endl;
+        return -1;
+    }
+    int n_chargers;
+    myfile >> n_chargers;
+    std::vector<int> charger_x;
+    std::vector<int> charger_y;
+    for (int i = 0; i < n_chargers; ++i)
+    {
+        int cx, cy;
+        myfile >> cx >> letter >> cy;
+        charger_x.push_back(cx);
+        charger_y.push_back(cy);
     }
 
-    int target_steps = (int)traj.size();
-    int* target_traj = new int[2*target_steps];
-    for (size_t i = 0; i < target_steps; ++i)
+    myfile >> letter;
+    if (letter != 'G')
     {
-        target_traj[i] = traj[i][0];
-        target_traj[i + target_steps] = traj[i][1];
+        std::cout << "error parsing file" << std::endl;
+        return -1;
+    }
+    int goalposeX, goalposeY;
+    myfile >> goalposeX >> letter >> goalposeY;
+
+    myfile >> letter;
+    if (letter != 'M')
+    {
+        std::cout << "error parsing file" << std::endl;
+        return -1;
     }
 
-    std::cout << "target_steps: " << target_steps << std::endl;
+    int max_time = x_size * y_size;
 
-    // read map
     int* map = new int[x_size*y_size];
     for (size_t i=0; i<x_size; i++)
     {
@@ -105,8 +143,8 @@ int main(int argc, char *argv[])
         {
             double value;
             ss >> value;
-
-            map[j*x_size+i] = (int) value;
+            int raw = (int)value;
+            map[j*x_size+i] = (raw == 0) ? 1 : 0;
             if (j != y_size-1) ss.ignore();
         }
     }
@@ -114,15 +152,19 @@ int main(int argc, char *argv[])
     myfile.close();
     std::cout << "\nRunning planner" << std::endl;
 
-    // CONTROL LOOP
     int curr_time = 0;
     int* action_ptr = new int[2];
-    int targetposeX, targetposeY;
     int newrobotposeX, newrobotposeY;
 
     int numofmoves = 0;
-    bool caught = false;
+    bool goal_reached = false;
     int pathcost = 0;
+
+    int num_charger = (int)charger_x.size();
+    std::vector<int> detected_x;
+    std::vector<int> detected_y;
+    detected_x.reserve((size_t)num_charger);
+    detected_y.reserve((size_t)num_charger);
 
     std::ofstream output_file("robot_trajectory.txt");
     if (!output_file.is_open()) {
@@ -130,16 +172,30 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    output_file << curr_time << "," << robotposeX << "," << robotposeY << std::endl;
+    output_file << curr_time << "," << robotposeX << "," << robotposeY << "," << charge << std::endl;
 
     while (true)
     {
         auto start = std::chrono::high_resolution_clock::now();
 
-        targetposeX = target_traj[curr_time];
-        targetposeY = target_traj[curr_time + target_steps];
+        detected_x.clear();
+        detected_y.clear();
+        for (int i = 0; i < num_charger; ++i)
+        {
+            int dx = std::abs(charger_x[i] - robotposeX);
+            int dy = std::abs(charger_y[i] - robotposeY);
+            if (std::max(dx, dy) <= detection_radius)
+            {
+                detected_x.push_back(charger_x[i]);
+                detected_y.push_back(charger_y[i]);
+            }
+        }
+        int n_detected = (int)detected_x.size();
+        const int* pdx = n_detected ? detected_x.data() : nullptr;
+        const int* pdy = n_detected ? detected_y.data() : nullptr;
 
-        planner(map, collision_thresh, x_size, y_size, robotposeX, robotposeY, target_steps, target_traj, targetposeX, targetposeY, curr_time, action_ptr);
+        planner(map, x_size, y_size, robotposeX, robotposeY, goalposeX, goalposeY,
+                n_detected, pdx, pdy, action_ptr);
         newrobotposeX = action_ptr[0];
         newrobotposeY = action_ptr[1];
 
@@ -149,7 +205,7 @@ int main(int argc, char *argv[])
             return -1;
         }
 
-        if (map[(newrobotposeY-1)*x_size + newrobotposeX-1] >= collision_thresh)
+        if (map[(newrobotposeY-1)*x_size + newrobotposeX-1] != 1)
         {
             std::cout << "ERROR: planned action leads to collision\n" << std::endl;
             return -1;
@@ -169,30 +225,43 @@ int main(int argc, char *argv[])
         if (newrobotposeX == robotposeX && newrobotposeY == robotposeY)
             numofmoves -= 1;
 
-        if (curr_time + movetime >= target_steps)
+        if (curr_time + movetime >= max_time)
             break;
 
         curr_time = curr_time + movetime;
         numofmoves = numofmoves + 1;
-        pathcost = pathcost + movetime*map[(robotposeY-1)*x_size + robotposeX-1];
+        pathcost = pathcost + 1;
 
         robotposeX = newrobotposeX;
         robotposeY = newrobotposeY;
 
-        output_file << curr_time << "," << robotposeX << "," << robotposeY << std::endl;
+        charge -= 1;
+        for (int i = 0; i < num_charger; ++i)
+        {
+            if (robotposeX == charger_x[i] && robotposeY == charger_y[i])
+            {
+                charge = charge_max;
+                break;
+            }
+        }
 
-        // check if target is caught
+        output_file << curr_time << "," << robotposeX << "," << robotposeY << "," << charge << std::endl;
+
+        if (charge <= 0)
+        {
+            std::cout << "ERROR: out of charge\n" << std::endl;
+            return -1;
+        }
+
         float thresh = 0.5;
-        targetposeX = target_traj[curr_time];
-        targetposeY = target_traj[curr_time + target_steps];
-        std::cout << "targetposeX: " << targetposeX << std::endl;
-        std::cout << "targetposeY: " << targetposeY << std::endl;
+        std::cout << "goalposeX: " << goalposeX << std::endl;
+        std::cout << "goalposeY: " << goalposeY << std::endl;
         std::cout << "robotposeX: " << robotposeX << std::endl;
         std::cout << "robotposeY: " << robotposeY << std::endl;
         std::cout << "Time: " << curr_time << std::endl;
-        if (abs(robotposeX - targetposeX) <= thresh && abs(robotposeY-targetposeY) <= thresh)
+        if (abs(robotposeX - goalposeX) <= thresh && abs(robotposeY - goalposeY) <= thresh)
         {
-            caught = true;
+            goal_reached = true;
             break;
         }
     }
@@ -200,12 +269,11 @@ int main(int argc, char *argv[])
     output_file.close();
 
     std::cout << "\nRESULT" << std::endl;
-    std::cout << "target caught = " << caught << std::endl;
+    std::cout << "goal reached = " << goal_reached << std::endl;
     std::cout << "time taken (s) = " << curr_time << std::endl;
     std::cout << "moves made = " << numofmoves << std::endl;
     std::cout << "path cost = " << pathcost << std::endl;
 
-    delete[] target_traj;
     delete[] map;
 
     return 0;
