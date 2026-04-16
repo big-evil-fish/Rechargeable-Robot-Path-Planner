@@ -21,6 +21,7 @@ void planner(
     int y_size,
     int robotposeX,
     int robotposeY,
+    int current_charge,
     int goalposeX,
     int goalposeY,
     int num_visible_chargers,
@@ -28,6 +29,7 @@ void planner(
     const int* visible_charger_y,
     int* action_ptr)
 {
+    (void)current_charge;
     (void)num_visible_chargers;
     (void)visible_charger_x;
     (void)visible_charger_y;

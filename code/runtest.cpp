@@ -194,7 +194,7 @@ int main(int argc, char *argv[])
         const int* pdx = n_detected ? detected_x.data() : nullptr;
         const int* pdy = n_detected ? detected_y.data() : nullptr;
 
-        planner(map, x_size, y_size, robotposeX, robotposeY, goalposeX, goalposeY,
+        planner(map, x_size, y_size, robotposeX, robotposeY, charge, goalposeX, goalposeY,
                 n_detected, pdx, pdy, action_ptr);
         newrobotposeX = action_ptr[0];
         newrobotposeY = action_ptr[1];

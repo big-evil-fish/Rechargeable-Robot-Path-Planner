@@ -7,6 +7,7 @@ void planner(
     int y_size,
     int robotposeX,
     int robotposeY,
+    int current_charge,
     int goalposeX,
     int goalposeY,
     int num_visible_chargers,
