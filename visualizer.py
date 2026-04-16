@@ -20,7 +20,7 @@ class worldMap():
     def buildChargermap(self):
         chargermap = zeros(size(self.costmap))
         for charger in self.chargers:
-            chargermap(charger['x'], charger['y']) = 1
+            chargermap[charger['x'], charger['y']] = 1
         return chargermap
 
 def parse_mapfile(filename):
@@ -79,7 +79,7 @@ def colored_line_between_pts(x, y, c, ax, **lc_kwargs):
 def buildChargermap(chargers, costmap):
     chargermap = zeros(size(costmap))
     for c in chargers:
-        chargermap(c['x'], c['y']) = 1
+        chargermap[c['x'], c['y']] = 1
     return chargermap
 
 if __name__ == "__main__":
@@ -118,8 +118,8 @@ if __name__ == "__main__":
         lc.set_segments(segments)
 
         # known map visulization
-        for i in range(-sensorRange:sensorRange+1):
-            for j in range(-sensorRange:sensorRange+1):
+        for i in range(-sensorRange, sensorRange+1):
+            for j in range(-sensorRange, sensorRange+1):
                 if (x+i)>=0 & (x+i)<x_size \
                     & (y+j)>=0 & (y+j)<y_size:
                     knownMap[x+i, j+i]=1
