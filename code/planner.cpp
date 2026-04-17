@@ -87,6 +87,12 @@ inline bool traversable(const Cell& c) { return traversable(c.x, c.y); }
 constexpr int NDX[8] = {-1, -1, -1,  0, 0,  1, 1, 1};
 constexpr int NDY[8] = {-1,  0,  1, -1, 1, -1, 0, 1};
 
+inline int octile(const Cell& a, const Cell& b) {
+    int dx = std::abs(a.x - b.x);
+    int dy = std::abs(a.y - b.y);
+    return std::max(dx, dy) * STEP_COST;
+}
+
 //_________________________________
 
 
@@ -138,7 +144,7 @@ void recompute_outlet_structures(){
     //multi-source dijkstra
     //sort of the exact same as BFS here (cost is 1) - can maybe replace this later?
     std::priority_queue<PQNode, std::vector<PQNode>, std::greater<PQNode>> pq;
-    for (int i = 0; i < O; ++i) {
+    for (int i = 0; i < O; i++) {
         const Cell& o = outlet_list[i];
         if (!in_bounds(o)) continue;
         d_out[idx(o.x, o.y)] = 0;
@@ -150,7 +156,7 @@ void recompute_outlet_structures(){
         int ci = idx(top.c.x, top.c.y);
         if (top.f > d_out[ci]) continue;
         if (top.f >= MAX_BATTERY) continue;
-        for (int k = 0; k < 8; ++k) {
+        for (int k = 0; k < 8; k++) {
             int nx = top.c.x + NDX[k], ny = top.c.y + NDY[k];
             if (!traversable(nx, ny)) continue;
             int ni = idx(nx, ny);
@@ -164,10 +170,10 @@ void recompute_outlet_structures(){
     }
     //outlet to outlet graph
     std::vector<std::vector<int>> edges(O, std::vector<int>(O, INF));
-    for (int i = 0; i < O; ++i) edges[i][i] = 0;
-    for (int i = 0; i < O; ++i) {
+    for (int i = 0; i < O; i++) edges[i][i] = 0;
+    for (int i = 0; i < O; i++) {
         auto dists = bounded_dijkstra(outlet_list[i], MAX_BATTERY);
-        for (int j = 0; j < O; ++j) {
+        for (int j = 0; j < O; j++) {
             if (i == j) continue;
             const Cell& oj = outlet_list[j];
             int d = dists[idx(oj.x, oj.y)];
@@ -175,25 +181,89 @@ void recompute_outlet_structures(){
         }
     }
 
-    //floyd-warshall for final all_pairs
+    //floyd-warshall on graph for final all_pairs
     D_outlet = edges;
     for (int k = 0; k < O; ++k) {
-        for (int i = 0; i < O; ++i) {
+        for (int i = 0; i < O; i++) {
             if (D_outlet[i][k] >= INF) continue;
-            for (int j = 0; j < O; ++j) {
+            for (int j = 0; j < O; j++) {
                 if (D_outlet[k][j] >= INF) continue;
                 int via = D_outlet[i][k] + D_outlet[k][j];
                 if (via < D_outlet[i][j]) D_outlet[i][j] = via;
             }
         }
     }
+    // NOTE: MAYBE SHOULD SWITCH TO JOHNSON'S.. ??
+    // FLOYD-WARSHALL IS BETTER FOR DENSE GRAPHS... THIS IS GOING TO BE SPARSE?
 }
 
 
+//just normal A* from a to b but aborts if it exceeds max_cost (battery usage in this context)
+int bounded_astar_cost(const Cell& a, const Cell& b, int max_cost) {
+    if (!traversable(a) || !traversable(b)) return INF; if (a == b) return 0;
+    std::unordered_map<Cell, int, CellHash> g;
+    g[a] = 0;
+    std::priority_queue<PQNode, std::vector<PQNode>, std::greater<PQNode>> pq;
+    pq.push({octile(a, b), 0, a});
+ 
+    while (!pq.empty()) {
+        PQNode top = pq.top(); pq.pop();
+        if (top.f > max_cost) return INF;
+        auto found_it = g.find(top.c);
+        int gc = (found_it == g.end()) ? INF : found_it->second;
+        if (top.f - octile(top.c, b) > gc) continue;
+        if (top.c == b) return gc;
+ 
+        for (int k = 0; k < 8; k++) {
+            int nx = top.c.x + NDX[k], ny = top.c.y + NDY[k];
+            Cell n{nx, ny};
+            if (!traversable(n)) continue;
+            int ng = gc + STEP_COST;
+            if (ng > max_cost) continue;
 
+            auto found_it2 = g.find(n);
+            if (found_it2 == g.end() || ng < found_it2->second) {
+                g[n] = ng;
+                pq.push({ng + octile(n, b), 0, n});
+            }
+        }
+    }
+    return INF;
+}
 
+int reachable_cost(const Cell& a, const Cell& b, int B) {
+    int direct = bounded_astar_cost(a, b, B); //direct path w/o going through other cells
+ 
+    int via = INF;
+    int bi = idx(b.x, b.y);
+    //for each reachable outlet get cost if we go through that outlet
+    if (nearest_outlet_idx[bi] >= 0) {
+        int tail_idx = nearest_outlet_idx[bi];
+        int tail = d_out[bi];
+ 
+        auto from_a = bounded_dijkstra(a, B);
+ 
+        for (int i = 0; i < static_cast<int>(outlet_list.size()); ++i) {
+            const Cell& oi = outlet_list[i];
 
+            int leg1 = from_a[idx(oi.x, oi.y)];
+            if (leg1 >= INF) continue;
 
+            int middle = D_outlet[i][tail_idx];
+            if (middle >= INF) continue;
+
+            long long total = (long long)leg1 + middle + tail;
+            if (total < via) via = static_cast<int>(total);
+        }
+    }
+    return std::min(direct, via);
+}
+
+/* --------
+
+MAIN PLANNING LOOP!
+
+-----------*/
 
 void planner(
     int* map,
@@ -243,11 +313,14 @@ void planner(
         plan_valid  = false;
     }
 
-    /* 
-    if on outlet: update battery ?
-    */
+    Cell robot{robotposeX, robotposeY};
+    Cell goal {goalposeX,  goalposeY};
+    int battery = current_charge;
+    //recharging if on outlet
+    if (known_outlets.count(robot)) battery = MAX_BATTERY;
 
-    //sec 3: goal is reachable path
+    //_________SECTION 3: goal is reachable path____________________
+    int goal_cost = reachable_cost(robot, goal, battery);
 
     //sec 4: explore by frontier-based search
 
