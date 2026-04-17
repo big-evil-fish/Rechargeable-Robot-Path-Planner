@@ -323,6 +323,26 @@ std::vector<Cell> astar_with_battery(const Cell& start, const Cell& goal, int st
     return path;
 }
 
+std::vector<Cell> compute_exploration_candidates(){
+//i'm so tired
+}
+
+
+
+Cell select_best_exploration_target(const Cell& robot, int battery, bool& found){
+    //grab candidates - what are these?
+    // any traversable cell with positive gain where gain is # of unsensed cellsaround it
+    auto candidates = compute_exploration_candidates();
+    found = false;
+    Cell best{-1, -1};
+    double best_score = -1.0;
+}
+
+
+
+
+
+
 
 bool plan_is_invalid(const Cell& robot){
     if (!S.plan_valid || S.current_plan.empty()){
@@ -441,8 +461,10 @@ void planner(
         return;
     }
 
-    //sec 4: explore by frontier-based search
-
+    //______SECTION 4: EXPLORE! ____________
+    bool found = false;
+    // the meat and gravy of it all! picking best target to navigate to.
+    Cell target = select_best_exploration_target(robot, battery, found);
 
     //greedy backup
     int nx = robotposeX;
