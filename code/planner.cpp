@@ -29,11 +29,29 @@ void planner(
     const int* visible_charger_y,
     int* action_ptr)
 {
+    //compiler warning nonsense
     (void)current_charge;
     (void)num_visible_chargers;
     (void)visible_charger_x;
     (void)visible_charger_y;
+    //////
 
+    //sec 1: just updating info based on sensing
+
+    /* 
+    sec 2: updating outlet knowledge
+    we're keeping track of shortest paths between outlets but these may update
+    if we've discovered new ones.
+
+    if on outlet: update battery ?
+    */
+
+    //sec 3: goal is reachable path
+
+    //sec 4: explore by frontier-based search
+
+
+    //greedy backup
     int nx = robotposeX;
     int ny = robotposeY;
 
