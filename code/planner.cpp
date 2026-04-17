@@ -10,6 +10,13 @@
 
 #define GETMAPINDEX(X, Y, XSIZE, YSIZE) ((Y - 1) * (XSIZE) + (X - 1))
 
+
+//____ROBOT CONSTANTS_____
+constexpr int SENSOR_RAD  = 2;
+
+
+
+
 static int cell_free(int* map, int x_size, int y_size, int x, int y)
 {
     if (x < 1 || x > x_size || y < 1 || y > y_size)
@@ -80,7 +87,16 @@ void planner(
     (void)visible_charger_y;
     //////
 
-    //sec 1: just updating info based on sensing
+    //_______SECTION 1: just updating info based on new info ________________
+
+    //updating sensed
+    for (int dx = -SENSOR_RAD; dx <= SENSOR_RAD; dx++){
+        for (int dy = -SENSOR_RAD; dy <= SENSOR_RAD; dy++){
+            int x = robotposeX+dx, y = robotposeY+dy;
+            if (in_bounds(x, y)) sensed[idx(x, y)] = 1;
+        }
+    }
+    //updating outlets
     for (int i = 0; i < num_visible_chargers; i++){
         Cell o{visible_charger_x[i], visible_charger_y[i]};
         if (in_bounds(o)) known_outlets.insert(o);
