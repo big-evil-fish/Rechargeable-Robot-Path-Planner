@@ -52,36 +52,39 @@ struct PQNode {
 
 /* _______STATE! ______*/
 
-//static, just storing here for convenience
-int x_size = 0, y_size = 0;
-std::vector<int>  static_map; //TODO: remember to set this
+struct PlannerState{
+    int x_size = 0, y_size = 0;
+    std::vector<int>  static_map; //TODO: remember to set this
 
-//basic state stuff
-std::vector<char> sensed; //specifically which cells have we SEEN ourselves
-std::unordered_set<Cell, CellHash> known_outlets; //
+    //basic state stuff
+    std::vector<char> sensed; //specifically which cells have we SEEN ourselves
+    std::unordered_set<Cell, CellHash> known_outlets; //
 
-std::unordered_set<Cell, CellHash> last_outlet_set; //to check if we've updated
+    std::unordered_set<Cell, CellHash> last_outlet_set; //to check if we've updated
 
-std::vector<int>  d_out; //dist to nearest outlet
-std::vector<int>  nearest_outlet_idx;
-std::vector<Cell> outlet_list; //ordered version of known_outlets for better checking
-std::vector<std::vector<int>> D_outlet; //all-pairs of best distances between outlets!
+    std::vector<int>  d_out; //dist to nearest outlet
+    std::vector<int>  nearest_outlet_idx;
+    std::vector<Cell> outlet_list; //ordered version of known_outlets for better checking
+    std::vector<std::vector<int>> D_outlet; //all-pairs of best distances between outlets!
 
-//plan specific state info
-std::vector<Cell> current_plan;
-Cell plan_target = {-1, -1};
-bool plan_valid  = false;
- 
-bool initialized = false;
+    //plan specific state info
+    std::vector<Cell> current_plan;
+    Cell plan_target = {-1, -1};
+    bool plan_valid  = false;
+    
+    bool initialized = false;
+};
+
+PlannerState S;
 
 /* SMALL HELPERS! */
-inline int idx(int x, int y)          { return y * x_size + x; }
-inline bool in_bounds(int x, int y)   { return x >= 0 && x < x_size && y >= 0 && y < y_size; }
+inline int idx(int x, int y)          { return y * S.x_size + x; }
+inline bool in_bounds(int x, int y)   { return x >= 0 && x < S.x_size && y >= 0 && y < S.y_size; }
 inline bool in_bounds(const Cell& c)  { return in_bounds(c.x, c.y); }
 
 inline bool traversable(int x, int y) {
     if (!in_bounds(x, y)) return false;
-    return static_map[idx(x, y)] != OBSTACLE;
+    return S.static_map[idx(x, y)] != OBSTACLE;
 }
 inline bool traversable(const Cell& c) { return traversable(c.x, c.y); }
 
@@ -100,7 +103,7 @@ inline int octile(const Cell& a, const Cell& b) {
 /*literally just dijkstra that runs out to radius max_battery so 
 you can get all outlets that can reach each other*/
 std::vector<int> bounded_dijkstra(const Cell& source, int max_dist) {
-    std::vector<int> dist(x_size * y_size, INF);
+    std::vector<int> dist(S.x_size * S.y_size, INF);
     if (!traversable(source)) return dist;
     dist[idx(source.x, source.y)] = 0;
  
@@ -130,15 +133,15 @@ std::vector<int> bounded_dijkstra(const Cell& source, int max_dist) {
 COMPUTES outlet-to-outlet all-pairs shortest paths
 */
 void recompute_outlet_structures(){
-    const int N = x_size * y_size;
-    std::fill(d_out.begin(), d_out.end(), INF);
-    std::fill(nearest_outlet_idx.begin(), nearest_outlet_idx.end(), -1);
+    const int N = S.x_size * S.y_size;
+    std::fill(S.d_out.begin(), S.d_out.end(), INF);
+    std::fill(S.nearest_outlet_idx.begin(), S.nearest_outlet_idx.end(), -1);
 
-    outlet_list.assign(known_outlets.begin(), known_outlets.end());
-    const int O = static_cast<int>(outlet_list.size());
+    S.outlet_list.assign(S.known_outlets.begin(), S.known_outlets.end());
+    const int O = static_cast<int>(S.outlet_list.size());
 
     if (O == 0) { //occurs once at start
-        D_outlet.clear();
+        S.D_outlet.clear();
         return;
     }
     //outlet-to-outlet dists
@@ -146,25 +149,25 @@ void recompute_outlet_structures(){
     //sort of the exact same as BFS here (cost is 1) - can maybe replace this later?
     std::priority_queue<PQNode, std::vector<PQNode>, std::greater<PQNode>> pq;
     for (int i = 0; i < O; i++) {
-        const Cell& o = outlet_list[i];
+        const Cell& o = S.outlet_list[i];
         if (!in_bounds(o)) continue;
-        d_out[idx(o.x, o.y)] = 0;
-        nearest_outlet_idx[idx(o.x, o.y)] = i;
+        S.d_out[idx(o.x, o.y)] = 0;
+        S.nearest_outlet_idx[idx(o.x, o.y)] = i;
         pq.push({0, 0, o});
     }
     while (!pq.empty()) {
         PQNode top = pq.top(); pq.pop();
         int ci = idx(top.c.x, top.c.y);
-        if (top.f > d_out[ci]) continue;
+        if (top.f > S.d_out[ci]) continue;
         if (top.f >= MAX_BATTERY) continue;
         for (int k = 0; k < 8; k++) {
             int nx = top.c.x + NDX[k], ny = top.c.y + NDY[k];
             if (!traversable(nx, ny)) continue;
             int ni = idx(nx, ny);
             int nd = top.f + STEP_COST;
-            if (nd <= MAX_BATTERY && nd < d_out[ni]) {
-                d_out[ni] = nd;
-                nearest_outlet_idx[ni] = nearest_outlet_idx[ci];
+            if (nd <= MAX_BATTERY && nd < S.d_out[ni]) {
+                S.d_out[ni] = nd;
+                S.nearest_outlet_idx[ni] = S.nearest_outlet_idx[ci];
                 pq.push({nd, 0, {nx, ny}});
             }
         }
@@ -173,24 +176,24 @@ void recompute_outlet_structures(){
     std::vector<std::vector<int>> edges(O, std::vector<int>(O, INF));
     for (int i = 0; i < O; i++) edges[i][i] = 0;
     for (int i = 0; i < O; i++) {
-        auto dists = bounded_dijkstra(outlet_list[i], MAX_BATTERY);
+        auto dists = bounded_dijkstra(S.outlet_list[i], MAX_BATTERY);
         for (int j = 0; j < O; j++) {
             if (i == j) continue;
-            const Cell& oj = outlet_list[j];
+            const Cell& oj = S.outlet_list[j];
             int d = dists[idx(oj.x, oj.y)];
             if (d <= MAX_BATTERY) edges[i][j] = d;
         }
     }
 
     //floyd-warshall on graph for final all_pairs
-    D_outlet = edges;
+    S.D_outlet = edges;
     for (int k = 0; k < O; ++k) {
         for (int i = 0; i < O; i++) {
-            if (D_outlet[i][k] >= INF) continue;
+            if (S.D_outlet[i][k] >= INF) continue;
             for (int j = 0; j < O; j++) {
-                if (D_outlet[k][j] >= INF) continue;
-                int via = D_outlet[i][k] + D_outlet[k][j];
-                if (via < D_outlet[i][j]) D_outlet[i][j] = via;
+                if (S.D_outlet[k][j] >= INF) continue;
+                int via = S.D_outlet[i][k] + S.D_outlet[k][j];
+                if (via < S.D_outlet[i][j]) S.D_outlet[i][j] = via;
             }
         }
     }
@@ -238,19 +241,19 @@ int reachable_cost(const Cell& a, const Cell& b, int B) {
     int via = INF;
     int bi = idx(b.x, b.y);
     //for each reachable outlet get cost if we go through that outlet
-    if (nearest_outlet_idx[bi] >= 0) {
-        int tail_idx = nearest_outlet_idx[bi];
-        int tail = d_out[bi];
+    if (S.nearest_outlet_idx[bi] >= 0) {
+        int tail_idx = S.nearest_outlet_idx[bi];
+        int tail = S.d_out[bi];
  
         auto from_a = bounded_dijkstra(a, B);
  
-        for (int i = 0; i < static_cast<int>(outlet_list.size()); ++i) {
-            const Cell& oi = outlet_list[i];
+        for (int i = 0; i < static_cast<int>(S.outlet_list.size()); ++i) {
+            const Cell& oi = S.outlet_list[i];
 
             int leg1 = from_a[idx(oi.x, oi.y)];
             if (leg1 >= INF) continue;
 
-            int middle = D_outlet[i][tail_idx];
+            int middle = S.D_outlet[i][tail_idx];
             if (middle >= INF) continue;
 
             long long total = (long long)leg1 + middle + tail;
@@ -298,7 +301,7 @@ std::vector<Cell> astar_with_battery(const Cell& start, const Cell& goal, int st
             if (bc < STEP_COST) continue; //realistically just checking if 0
  
             int nb = bc - STEP_COST;
-            if (known_outlets.count(n)) nb = MAX_BATTERY;
+            if (S.known_outlets.count(n)) nb = MAX_BATTERY;
             int ng = gc + STEP_COST;
  
             auto itg = g.find(n);
@@ -322,11 +325,11 @@ std::vector<Cell> astar_with_battery(const Cell& start, const Cell& goal, int st
 
 
 bool plan_is_invalid(const Cell& robot){
-    if (!plan_valid || current_plan.empty()){
+    if (!S.plan_valid || S.current_plan.empty()){
         return true;
     }
     //just making sure it aligns
-    const Cell& head = current_plan.front(); 
+    const Cell& head = S.current_plan.front(); 
     if (std::abs(head.x - robot.x) > 1 || std::abs(head.y - robot.y) > 1) return true;
     return false;
 }
@@ -358,7 +361,8 @@ void planner(
     (void)num_visible_chargers;
     (void)visible_charger_x;
     (void)visible_charger_y;
-    //////
+    ////// initializing things -->> >TODO: CHANGE EVERYTHING TO BEING IN STRUCT SO NOT RE-USING VAR NAMES
+    // VERY CONFUSING! !!!!!
 
     //_______SECTION 1: just updating info based on new info ________________
 
@@ -366,41 +370,41 @@ void planner(
     for (int dx = -SENSOR_RAD; dx <= SENSOR_RAD; dx++){
         for (int dy = -SENSOR_RAD; dy <= SENSOR_RAD; dy++){
             int x = robotposeX+dx, y = robotposeY+dy;
-            if (in_bounds(x, y)) sensed[idx(x, y)] = 1;
+            if (in_bounds(x, y)) S.sensed[idx(x, y)] = 1;
         }
     }
     //updating outlets
     for (int i = 0; i < num_visible_chargers; i++){
         Cell o{visible_charger_x[i], visible_charger_y[i]};
-        if (in_bounds(o)) known_outlets.insert(o);
+        if (in_bounds(o)) S.known_outlets.insert(o);
     }
 
 
     //_________SECTION 2: updating outlet path knowledge _____________
     //we're keeping track of shortest paths between outlets but these may update
-    if (known_outlets.size() != last_outlet_set.size()) {
+    if (S.known_outlets.size() != S.last_outlet_set.size()) {
         recompute_outlet_structures();
-        last_outlet_set = known_outlets;
+        S.last_outlet_set = S.known_outlets;
         //need to replan if new outlet discovered
-        current_plan.clear();
-        plan_target = {-1, -1};
-        plan_valid  = false;
+        S.current_plan.clear();
+        S.plan_target = {-1, -1};
+        S.plan_valid  = false;
     }
 
     Cell robot{robotposeX, robotposeY};
     Cell goal {goalposeX,  goalposeY};
     int battery = current_charge;
     //recharging if on outlet
-    if (known_outlets.count(robot)) battery = MAX_BATTERY;
+    if (S.known_outlets.count(robot)) battery = MAX_BATTERY;
 
     //_________SECTION 3: goal is reachable path____________________
     int goal_cost = reachable_cost(robot, goal, battery);
     if (goal_cost < INF){
-        if (plan_target != goal || plan_is_invalid(robot)){ //change strats!
+        if (S.plan_target != goal || plan_is_invalid(robot)){ //change strats!
             auto plan = astar_with_battery(robot, goal, battery);
-            current_plan = plan; //can i use std::move here? signal to compiler ?
-            plan_target = goal;
-            plan_valid = !current_plan.empty();
+            S.current_plan = plan; //can i use std::move here? signal to compiler ?
+            S.plan_target = goal;
+            S.plan_valid = !S.current_plan.empty();
         }
     }
 
