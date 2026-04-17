@@ -7,22 +7,25 @@
 #include <cstdlib>
 #include <vector>
 #include <unordered_set>
+#include <queue>
 
 #define GETMAPINDEX(X, Y, XSIZE, YSIZE) ((Y - 1) * (XSIZE) + (X - 1))
-
+#define OBSTACLE 1
 
 //____ROBOT CONSTANTS_____
-constexpr int SENSOR_RAD  = 2;
+constexpr int SENSOR_RAD = 2;
+constexpr int MAX_BATTERY = 100;
+constexpr int STEP_COST = 1; //right now it's 1 for all neighbors
+constexpr int INF = std::numeric_limits<int>::max() / 4;
 
-
-
-
+///
 static int cell_free(int* map, int x_size, int y_size, int x, int y)
 {
     if (x < 1 || x > x_size || y < 1 || y > y_size)
         return 0;
     return map[GETMAPINDEX(x, y, x_size, y_size)] == 1;
 }
+//_____ STRUCTS_____
 
 /// basic cell type instead of pairs
 struct Cell {
@@ -36,10 +39,21 @@ struct CellHash {
     }
 };
 
-/* STATE! */
+struct PQNode {
+    int f;
+    int tiebreak;
+    Cell c;
+    bool operator>(const PQNode& o) const {
+        if (f != o.f) return f > o.f;
+        return tiebreak > o.tiebreak;
+    }
+};
+
+/* _______STATE! ______*/
 
 //static, just storing here for convenience
 int x_size = 0, y_size = 0;
+std::vector<int>  static_map; //TODO: remember to set this
 
 //basic state stuff
 std::vector<char> sensed; //specifically which cells have we SEEN ourselves
@@ -63,6 +77,76 @@ bool initialized = false;
 inline int idx(int x, int y)          { return y * x_size + x; }
 inline bool in_bounds(int x, int y)   { return x >= 0 && x < x_size && y >= 0 && y < y_size; }
 inline bool in_bounds(const Cell& c)  { return in_bounds(c.x, c.y); }
+
+inline bool traversable(int x, int y) {
+    if (!in_bounds(x, y)) return false;
+    return static_map[idx(x, y)] != OBSTACLE;
+}
+inline bool traversable(const Cell& c) { return traversable(c.x, c.y); }
+
+constexpr int NDX[8] = {-1, -1, -1,  0, 0,  1, 1, 1};
+constexpr int NDY[8] = {-1,  0,  1, -1, 1, -1, 0, 1};
+
+//_________________________________
+
+
+//figures out all-pairs between outlets specifically
+/*
+COMPUTES THREE THINGS:
+- outlet-to-outlet dists
+- cell-to-closest-outlet dists
+- try to compute reachable cost from cur robot position to target
+
+*/
+void recompute_outlet_structures(){
+    const int N = x_size * y_size;
+    std::fill(d_out.begin(), d_out.end(), INF);
+    std::fill(nearest_outlet_idx.begin(), nearest_outlet_idx.end(), -1);
+
+    outlet_list.assign(known_outlets.begin(), known_outlets.end());
+    const int O = static_cast<int>(outlet_list.size());
+
+    if (O == 0) { //occurs once at start
+        D_outlet.clear();
+        return;
+    }
+    //outlet-to-outlet dists
+    //multi-source dijkstra
+    //sort of the exact same as BFS here (cost is 1) - can maybe replace this later?
+    std::priority_queue<PQNode, std::vector<PQNode>, std::greater<PQNode>> pq;
+    for (int i = 0; i < O; ++i) {
+        const Cell& o = outlet_list[i];
+        if (!in_bounds(o)) continue;
+        d_out[idx(o.x, o.y)]              = 0;
+        nearest_outlet_idx[idx(o.x, o.y)] = i;
+        pq.push({0, 0, o});
+    }
+    while (!pq.empty()) {
+        PQNode top = pq.top(); pq.pop();
+        int ci = idx(top.c.x, top.c.y);
+        if (top.f > d_out[ci]) continue;
+        if (top.f >= MAX_BATTERY) continue;
+        for (int k = 0; k < 8; ++k) {
+            int nx = top.c.x + NDX[k], ny = top.c.y + NDY[k];
+            if (!traversable(nx, ny)) continue;
+            int ni = idx(nx, ny);
+            int nd = top.f + STEP_COST;
+            if (nd <= MAX_BATTERY && nd < d_out[ni]) {
+                d_out[ni]              = nd;
+                nearest_outlet_idx[ni] = nearest_outlet_idx[ci];
+                pq.push({nd, 0, {nx, ny}});
+            }
+        }
+    }
+
+
+
+
+}
+
+
+
+
 
 
 
@@ -103,11 +187,18 @@ void planner(
     }
 
 
-    /* 
-    sec 2: updating outlet knowledge
-    we're keeping track of shortest paths between outlets but these may update
-    if we've discovered new ones.
+    //_________SECTION 2: updating outlet path knowledge _____________
+    //we're keeping track of shortest paths between outlets but these may update
+    if (known_outlets.size() != last_outlet_set.size()) {
+        recompute_outlet_structures();
+        last_outlet_set = known_outlets;
+        //need to replan if new outlet discovered
+        current_plan.clear();
+        plan_target = {-1, -1};
+        plan_valid  = false;
+    }
 
+    /* 
     if on outlet: update battery ?
     */
 
