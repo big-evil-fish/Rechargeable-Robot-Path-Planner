@@ -16,6 +16,7 @@
 constexpr int SENSOR_RAD = 2;
 constexpr int MAX_BATTERY = 100;
 constexpr int STEP_COST = 1; //right now it's 1 for all neighbors
+// ^ if keeping this - switch to BFS
 constexpr int INF = std::numeric_limits<int>::max() / 4;
 
 ///
@@ -259,6 +260,79 @@ int reachable_cost(const Cell& a, const Cell& b, int B) {
     return std::min(direct, via);
 }
 
+//this is NOT 3D A*!! - it's just A* that tracks battery alongside and breaks ties by higher remaining battery
+std::vector<Cell> astar_with_battery(const Cell& start, const Cell& goal, int start_battery) {
+    std::vector<Cell> path;
+    if (!traversable(start) || !traversable(goal)) return path;
+    std::unordered_map<Cell, int, CellHash>  g;
+    std::unordered_map<Cell, int, CellHash>  batt;
+    std::unordered_map<Cell, Cell, CellHash> parent;
+ 
+    g[start] = 0;
+    batt[start] = start_battery;
+    std::priority_queue<PQNode, std::vector<PQNode>, std::greater<PQNode>> pq;
+    pq.push({octile(start, goal), -start_battery, start});
+ 
+    //basic A* loop
+    while (!pq.empty()) {
+        PQNode top = pq.top(); pq.pop();
+        Cell c = top.c;
+        if (c == goal) {
+            for (Cell cur = goal;;) {
+                path.push_back(cur);
+                auto it = parent.find(cur);
+                if (it == parent.end()) break;
+                cur = it->second;
+            }
+            std::reverse(path.begin(), path.end());
+            return path;
+        }
+        //also store battery
+        int gc = g[c];
+        int bc = batt[c];
+ 
+        for (int k = 0; k < 8; ++k) {
+            int nx = c.x + NDX[k], ny = c.y + NDY[k];
+            Cell n{nx, ny};
+            if (!traversable(n)) continue;
+            if (bc < STEP_COST) continue; //realistically just checking if 0
+ 
+            int nb = bc - STEP_COST;
+            if (known_outlets.count(n)) nb = MAX_BATTERY;
+            int ng = gc + STEP_COST;
+ 
+            auto itg = g.find(n);
+            auto itb = batt.find(n);
+            bool accept = false;
+            if (itg == g.end()) accept = true;
+            //weird structuring of normal A* check, asks if is better than prev g
+            else if (ng < itg->second) accept = true;
+            else if (ng == itg->second && nb > itb->second) accept = true;
+ 
+            if (accept) {
+                g[n] = ng;
+                batt[n] = nb;
+                parent[n] = c;
+                pq.push({ng + octile(n, goal), -nb, n});
+            }
+        }
+    }
+    return path;
+}
+
+
+bool plan_is_invalid(const Cell& robot){
+    if (!plan_valid || current_plan.empty()){
+        return true;
+    }
+    //just making sure it aligns
+    const Cell& head = current_plan.front(); 
+    if (std::abs(head.x - robot.x) > 1 || std::abs(head.y - robot.y) > 1) return true;
+    return false;
+}
+
+
+
 /* --------
 
 MAIN PLANNING LOOP!
@@ -321,6 +395,14 @@ void planner(
 
     //_________SECTION 3: goal is reachable path____________________
     int goal_cost = reachable_cost(robot, goal, battery);
+    if (goal_cost < INF){
+        if (plan_target != goal || plan_is_invalid(robot)){ //change strats!
+            auto plan = astar_with_battery(robot, goal, battery);
+            current_plan = plan; //can i use std::move here? signal to compiler ?
+            plan_target = goal;
+            plan_valid = !current_plan.empty();
+        }
+    }
 
     //sec 4: explore by frontier-based search
 
