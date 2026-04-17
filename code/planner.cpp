@@ -5,6 +5,8 @@
  *=================================================================*/
 #include "planner.h"
 #include <cstdlib>
+#include <vector>
+#include <unordered_set>
 
 #define GETMAPINDEX(X, Y, XSIZE, YSIZE) ((Y - 1) * (XSIZE) + (X - 1))
 
@@ -14,6 +16,40 @@ static int cell_free(int* map, int x_size, int y_size, int x, int y)
         return 0;
     return map[GETMAPINDEX(x, y, x_size, y_size)] == 1;
 }
+
+/// basic cell type instead of pairs
+struct Cell {
+    int x, y;
+    bool operator==(const Cell& o) const { return x == o.x && y == o.y; }
+    bool operator!=(const Cell& o) const { return !(*this == o); }
+};
+struct CellHash {
+    size_t operator()(const Cell& c) const noexcept {
+        return (static_cast<size_t>(c.x) << 20) ^ static_cast<size_t>(c.y);
+    }
+};
+
+/* STATE! */
+
+//basic state stuff
+
+std::vector<char> sensed; //specifically which cells have we SEEN ourselves
+std::unordered_set<Cell, CellHash> known_outlets; //
+
+std::unordered_set<Cell, CellHash> last_outlet_set; //to check if we've updated
+
+std::vector<int>  d_out; //dist to nearest outlet
+std::vector<int>  nearest_outlet_idx;
+std::vector<Cell> outlet_list; //ordered version of known_outlets for better checking
+std::vector<std::vector<int>> D_outlet; //all-pairs of best distances between outlets!
+
+//plan specific state info
+std::vector<Cell> current_plan;
+Cell plan_target = {-1, -1};
+bool plan_valid  = false;
+ 
+bool initialized = false;
+
 
 void planner(
     int* map,
@@ -37,6 +73,7 @@ void planner(
     //////
 
     //sec 1: just updating info based on sensing
+
 
     /* 
     sec 2: updating outlet knowledge
