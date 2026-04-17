@@ -361,8 +361,25 @@ void planner(
     (void)num_visible_chargers;
     (void)visible_charger_x;
     (void)visible_charger_y;
-    ////// initializing things -->> >TODO: CHANGE EVERYTHING TO BEING IN STRUCT SO NOT RE-USING VAR NAMES
-    // VERY CONFUSING! !!!!!
+    ////// initializing things
+    if (!S.initialized || S.x_size != x_size || !S.y_size != y_size){
+        S.x_size = x_size;
+        S.y_size = y_size;
+        int N = x_size * y_size;
+        S.static_map.assign(N, 0);
+        std::memcpy(S.static_map.data(), map, sizeof(int) * N);
+        S.sensed.assign(N, 0);
+        S.d_out.assign(N, INF);
+        S.nearest_outlet_idx.assign(N, -1);
+        S.known_outlets.clear();
+        S.last_outlet_set.clear();
+        S.outlet_list.clear();
+        S.D_outlet.clear();
+        S.current_plan.clear();
+        S.plan_target = {-1, -1};
+        S.plan_valid  = false;
+        S.initialized = true;
+    }
 
     //_______SECTION 1: just updating info based on new info ________________
 
