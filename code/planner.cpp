@@ -31,8 +31,10 @@ struct CellHash {
 
 /* STATE! */
 
-//basic state stuff
+//static, just storing here for convenience
+int x_size = 0, y_size = 0;
 
+//basic state stuff
 std::vector<char> sensed; //specifically which cells have we SEEN ourselves
 std::unordered_set<Cell, CellHash> known_outlets; //
 
@@ -49,6 +51,12 @@ Cell plan_target = {-1, -1};
 bool plan_valid  = false;
  
 bool initialized = false;
+
+/* SMALL HELPERS! */
+inline int idx(int x, int y)          { return y * x_size + x; }
+inline bool in_bounds(int x, int y)   { return x >= 0 && x < x_size && y >= 0 && y < y_size; }
+inline bool in_bounds(const Cell& c)  { return in_bounds(c.x, c.y); }
+
 
 
 void planner(
@@ -73,6 +81,10 @@ void planner(
     //////
 
     //sec 1: just updating info based on sensing
+    for (int i = 0; i < num_visible_chargers; i++){
+        Cell o{visible_charger_x[i], visible_charger_y[i]};
+        if (in_bounds(o)) known_outlets.insert(o);
+    }
 
 
     /* 
