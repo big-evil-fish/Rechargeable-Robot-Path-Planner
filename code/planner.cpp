@@ -423,6 +423,22 @@ void planner(
             S.plan_target = goal;
             S.plan_valid = !S.current_plan.empty();
         }
+        // apply next action from plan
+        action_ptr[0] = robotposeX;
+        action_ptr[1] = robotposeY;
+
+        while (!S.current_plan.empty() &&
+                S.current_plan.front().x == robotposeX &&
+                S.current_plan.front().y == robotposeY){
+                    S.current_plan.erase(S.current_plan.begin());
+                } //shouldn't ever have duplicates/waiting but just in case
+        
+        if (!S.current_plan.empty()){
+            const Cell& next = S.current_plan.front();
+            action_ptr[0] = next.x;
+            action_ptr[1] = next.y;
+        }
+        return;
     }
 
     //sec 4: explore by frontier-based search
