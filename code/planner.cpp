@@ -90,13 +90,37 @@ constexpr int NDY[8] = {-1,  0,  1, -1, 1, -1, 0, 1};
 //_________________________________
 
 
+/*literally just dijkstra that runs out to radius max_battery so 
+you can get all outlets that can reach each other*/
+std::vector<int> bounded_dijkstra(const Cell& source, int max_dist) {
+    std::vector<int> dist(x_size * y_size, INF);
+    if (!traversable(source)) return dist;
+    dist[idx(source.x, source.y)] = 0;
+ 
+    std::priority_queue<PQNode, std::vector<PQNode>, std::greater<PQNode>> pq;
+    pq.push({0, 0, source});
+ 
+    while (!pq.empty()) {
+        PQNode top = pq.top(); pq.pop();
+        if (top.f > dist[idx(top.c.x, top.c.y)]) continue;
+        if (top.f >= max_dist) continue;
+        for (int k = 0; k < 8; ++k) {
+            int nx = top.c.x + NDX[k], ny = top.c.y + NDY[k];
+            if (!traversable(nx, ny)) continue;
+            int nd = top.f + STEP_COST;
+            if (nd <= max_dist && nd < dist[idx(nx, ny)]) {
+                dist[idx(nx, ny)] = nd;
+                pq.push({nd, 0, {nx, ny}});
+            }
+        }
+    }
+    return dist;
+}
+
+
 //figures out all-pairs between outlets specifically
 /*
-COMPUTES THREE THINGS:
-- outlet-to-outlet dists
-- cell-to-closest-outlet dists
-- try to compute reachable cost from cur robot position to target
-
+COMPUTES outlet-to-outlet all-pairs shortest paths
 */
 void recompute_outlet_structures(){
     const int N = x_size * y_size;
@@ -117,7 +141,7 @@ void recompute_outlet_structures(){
     for (int i = 0; i < O; ++i) {
         const Cell& o = outlet_list[i];
         if (!in_bounds(o)) continue;
-        d_out[idx(o.x, o.y)]              = 0;
+        d_out[idx(o.x, o.y)] = 0;
         nearest_outlet_idx[idx(o.x, o.y)] = i;
         pq.push({0, 0, o});
     }
@@ -132,16 +156,37 @@ void recompute_outlet_structures(){
             int ni = idx(nx, ny);
             int nd = top.f + STEP_COST;
             if (nd <= MAX_BATTERY && nd < d_out[ni]) {
-                d_out[ni]              = nd;
+                d_out[ni] = nd;
                 nearest_outlet_idx[ni] = nearest_outlet_idx[ci];
                 pq.push({nd, 0, {nx, ny}});
             }
         }
     }
+    //outlet to outlet graph
+    std::vector<std::vector<int>> edges(O, std::vector<int>(O, INF));
+    for (int i = 0; i < O; ++i) edges[i][i] = 0;
+    for (int i = 0; i < O; ++i) {
+        auto dists = bounded_dijkstra(outlet_list[i], MAX_BATTERY);
+        for (int j = 0; j < O; ++j) {
+            if (i == j) continue;
+            const Cell& oj = outlet_list[j];
+            int d = dists[idx(oj.x, oj.y)];
+            if (d <= MAX_BATTERY) edges[i][j] = d;
+        }
+    }
 
-
-
-
+    //floyd-warshall for final all_pairs
+    D_outlet = edges;
+    for (int k = 0; k < O; ++k) {
+        for (int i = 0; i < O; ++i) {
+            if (D_outlet[i][k] >= INF) continue;
+            for (int j = 0; j < O; ++j) {
+                if (D_outlet[k][j] >= INF) continue;
+                int via = D_outlet[i][k] + D_outlet[k][j];
+                if (via < D_outlet[i][j]) D_outlet[i][j] = via;
+            }
+        }
+    }
 }
 
 
