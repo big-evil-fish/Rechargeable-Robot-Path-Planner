@@ -35,6 +35,10 @@ G
 goalposeX,goalposeY
 M
 grid
+
+Grid (M): each line is one x; comma-separated y from 1..y_size. In the file, 0 = traversable
+cell and nonzero = obstacle. runtest converts to an internal buffer where 1 = free and 0 = blocked
+(see map[] assignment and collision check).
 */
 
 int main(int argc, char *argv[])
@@ -137,7 +141,16 @@ int main(int argc, char *argv[])
     int* map = new int[x_size*y_size];
     for (size_t i=0; i<x_size; i++)
     {
-        std::getline(myfile, line);
+        // After `>> letter` consumed 'M', the stream may sit on a newline; the first
+        // getline would then read an empty line and shift every row in x (wrong grid).
+        do {
+            if (!std::getline(myfile, line))
+            {
+                std::cout << "error parsing map grid" << std::endl;
+                return -1;
+            }
+        } while (line.empty());
+
         std::stringstream ss(line);
         for (size_t j=0; j<y_size; j++)
         {

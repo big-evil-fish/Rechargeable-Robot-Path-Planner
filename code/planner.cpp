@@ -14,7 +14,8 @@
 #include <vector>
 
 #define GETMAPINDEX(X, Y, XSIZE, YSIZE) ((Y - 1) * (XSIZE) + (X - 1))
-#define OBSTACLE 1
+// Same encoding as runtest's map[] after load: 1 = traversable, 0 = blocked
+#define RUNTEST_MAP_FREE 1
 
 //____ROBOT CONSTANTS_____
 constexpr int SENSOR_RAD = 2;
@@ -77,6 +78,7 @@ struct PlannerState{
     bool plan_valid  = false;
     
     bool initialized = false;
+    const int* map_copy_src = nullptr;
 };
 
 PlannerState S;
@@ -91,7 +93,7 @@ inline bool in_bounds(const Cell& c)  { return in_bounds(c.x, c.y); }
 
 inline bool traversable(int x, int y) {
     if (!in_bounds(x, y)) return false;
-    return S.static_map[idx(x, y)] == OBSTACLE;
+    return S.static_map[idx(x, y)] == RUNTEST_MAP_FREE;
 }
 inline bool traversable(const Cell& c) { return traversable(c.x, c.y); }
 
@@ -486,12 +488,13 @@ void planner(
     (void)visible_charger_x;
     (void)visible_charger_y;
     ////// initializing things
-    if (!S.initialized || S.x_size != x_size || S.y_size != y_size){
+    if (!S.initialized || S.x_size != x_size || S.y_size != y_size || S.map_copy_src != map) {
         S.x_size = x_size;
         S.y_size = y_size;
         int N = x_size * y_size;
         S.static_map.assign(N, 0);
         std::memcpy(S.static_map.data(), map, sizeof(int) * N);
+        S.map_copy_src = map;
         S.sensed.assign(N, 0);
         S.d_out.assign(N, INF);
         S.nearest_outlet_idx.assign(N, -1);
