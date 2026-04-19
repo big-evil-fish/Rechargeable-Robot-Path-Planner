@@ -395,18 +395,75 @@ Cell select_best_exploration_target(const Cell& robot, int battery, bool& found)
     Cell best{-1, -1};
     double best_score = -1.0;
 
+    /* MAKING THIS A VARIABLE SO THAT WE CAN CHANGE IT LATER */
+    /*LIKELY NOT NEEDED, REMOVE LATER*/
+    /////constexpr int RETREAT_MARGIN = 1;
+
+    //precomputing cost from robot to all cells don't know why we were checking A* for each candidate earlier
+    auto from_robot = bounded_dijkstra(robot, battery);
+
+
     for (const Cell& f: candidates){
         if (f == robot) continue;
-        int my_cost = reachable_cost(robot, f, battery);
-        if (my_cost >= INF || my_cost == 0) continue;
 
-        int my_gain = information_gain(f);
-        if (my_gain == 0) continue;
+        int f_i = idx(f.x, f.y);
+        int direct = from_robot[f_i]; //direct cost
+        int retreat = S.d_out[f_i]; //cost from f to nearest outlet
 
-        int d = S.d_out[idx(f.x, f.y)]; //reminder: distance to nearest outlet!!
-        //trying to nudge towards nearer cells... small bonus
-        double prox  = 1.0+0.1 / (1.0+(d >= INF ? 1e9 : d));
-        double score = (static_cast<double>(my_gain) / my_cost) * prox;
+        int via_outlet_cost = INF;
+        int via_outlet_arrival = -1; //arrival battery!
+        //checking the reachable cost but w precomputed stuff mostly
+        if (S.nearest_outlet_idx[f_i] >= 0){
+            int tail_idx = S.nearest_outlet_idx[f_i];
+            int tail = S.d_out[f_i];
+            for (int i = 0; i < static_cast<int>(S.outlet_list.size()); i++){
+                const Cell& oi = S.outlet_list[i];
+                int leg1 = from_robot[idx(oi.x, oi.y)];
+                if (leg1 >= INF) continue;
+                int middle = S.D_outlet[i][tail_idx];
+                if (middle >= INF) continue;
+                long long total = (long long)leg1 + middle + tail;
+                if (total < via_outlet_cost) via_outlet_cost = (int)total;
+            }
+            if (via_outlet_cost < INF) via_outlet_arrival = MAX_BATTERY - tail;
+        }
+
+
+        //////
+        int cost;
+        int arrival_battery;
+        //CASE 1: direct path
+        //would be weird if direct were ever more than via outlet but just in case
+        if (direct < INF && direct <= via_outlet_cost){
+            cost = direct;
+            arrival_battery = battery - direct;
+        }
+        //CASE 2: go through outlet network
+        else if (via_outlet_cost < INF){
+            cost = via_outlet_cost;
+            arrival_battery = via_outlet_arrival;
+        }
+        //CASE 3: not reachable
+        else {
+            continue;
+        }
+        if (cost == 0) continue;
+
+
+        ///actually checking if can retreat
+        if (retreat >= INF) continue;
+
+
+        //exploration budget after you arrive at cell
+        int exploration_budget = arrival_battery - retreat;
+        if (exploration_budget < 0) exploration_budget = 0;
+        //trying to bias towards being able to explore more after arrival, hopefully not outweighting nearest
+        double lookahead_factor = 1.0 + static_cast<double>(exploration_budget) / MAX_BATTERY;
+
+        int gain = information_gain(f);
+        if (gain == 0) continue;
+
+        double score = (static_cast<double>(gain) * lookahead_factor) / cost; //should i add prox back ??? 
 
         if (score > best_score){
             best_score = score;
