@@ -263,6 +263,21 @@ int reachable_cost(const Cell& a, const Cell& b, int B) {
     return std::min(direct, via);
 }
 
+//very self explanatory
+Cell nearest_reachable_outlet(const Cell& robot, int battery, bool& found) {
+    found = false;
+    Cell best{-1, -1};
+    int  best_d = INF;
+    auto from_r = bounded_dijkstra(robot, battery);
+    for (const Cell& o : S.outlet_list) {
+        int d = from_r[idx(o.x, o.y)];
+        if (d < best_d) {best_d = d; best = o; found = true;}
+    }
+    return best;
+}
+
+
+
 //this is NOT 3D A*!! - it's just A* that tracks battery alongside and breaks ties by higher remaining battery
 std::vector<Cell> astar_with_battery(const Cell& start, const Cell& goal, int start_battery) {
     std::vector<Cell> path;
@@ -412,6 +427,7 @@ void next_action_from_plan(int rx, int ry, int* action_ptr) {
 }
 
 
+//plan stuff
 
 bool plan_is_invalid(const Cell& robot){
     if (!S.plan_valid || S.current_plan.empty()){
@@ -423,7 +439,11 @@ bool plan_is_invalid(const Cell& robot){
     return false;
 }
 
-
+void set_plan(std::vector<Cell> plan, const Cell& target) {
+    S.current_plan = std::move(plan);
+    S.plan_target = target;
+    S.plan_valid = !S.current_plan.empty();
+}
 
 /* --------
 
@@ -523,7 +543,25 @@ void planner(
 
     if (!found) {
         //retreat
-        
+        bool ok = false;
+        Cell fallback = nearest_reachable_outlet(robot, battery, ok);
+        if (!ok || fallback == robot) { //already there ? 
+            action_ptr[0] = robotposeX;
+            action_ptr[1] = robotposeY;
+            return;
+        }
+        //plan back
+        if (S.plan_target != fallback || plan_is_invalid(robot)) {
+            auto plan = astar_with_battery(robot, fallback, battery);
+            set_plan(std::move(plan), fallback);
+        }
     }
-    
+    else {
+        if (S.plan_target != target || plan_is_invalid(robot)) {
+            auto plan = astar_with_battery(robot, target, battery);
+            set_plan(std::move(plan), target);
+        }
+    }
+
+    next_action_from_plan(robotposeX, robotposeY, action_ptr);
 }
