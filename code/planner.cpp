@@ -323,15 +323,42 @@ std::vector<Cell> astar_with_battery(const Cell& start, const Cell& goal, int st
     return path;
 }
 
+//super simple helper, just checking for # of non-sensed cells around a cell
 int information_gain(const Cell& f) {
-//TODO
+int count = 0;
+    for (int dx = -SENSOR_RAD; dx <= SENSOR_RAD; ++dx) {
+        for (int dy = -SENSOR_RAD; dy <= SENSOR_RAD; ++dy) {
+            int x = f.x + dx, y = f.y + dy;
+            if (in_bounds(x, y) && !S.sensed[idx(x, y)]) ++count;
+        }
+    }
+    return count;
 }
 
-
-
-
+/* might switch this to tracking all frontier candidate nodes instead of recomputing,
+   will see @ runtime */
 std::vector<Cell> compute_exploration_candidates(){
-//i'm so tired
+    std::vector<Cell> result;
+    std::vector<char> candidate(S.x_size * S.y_size, 0);
+    for (int y = 0; y < S.y_size; y++) {
+        for (int x = 0; x < S.x_size; x++) {
+            if (S.sensed[idx(x, y)]) continue;
+            for (int dx = -SENSOR_RAD; dx <= SENSOR_RAD; ++dx) {
+                for (int dy = -SENSOR_RAD; dy <= SENSOR_RAD; ++dy) {
+                    int cx = x + dx, cy = y + dy;
+                    if (in_bounds(cx, cy) && traversable(cx, cy)) {
+                        candidate[idx(cx, cy)] = 1;
+                    }
+                }
+            }
+        }
+    }
+    for (int y = 0; y < S.y_size; ++y) {
+        for (int x = 0; x < S.x_size; ++x) {
+            if (candidate[idx(x, y)]) result.push_back({x, y});
+        }
+    }
+    return result;
 }
 
 
@@ -368,7 +395,21 @@ Cell select_best_exploration_target(const Cell& robot, int battery, bool& found)
 
 
 
-
+void next_action_from_plan(int rx, int ry, int* action_ptr) {
+    action_ptr[0] = rx;
+    action_ptr[1] = ry;
+ 
+    while (!S.current_plan.empty() &&
+        S.current_plan.front().x == rx &&
+        S.current_plan.front().y == ry) {
+        S.current_plan.erase(S.current_plan.begin());
+    }
+    if (S.current_plan.empty()) return;
+ 
+    const Cell& next = S.current_plan.front();
+    action_ptr[0] = next.x;
+    action_ptr[1] = next.y;
+}
 
 
 
@@ -471,21 +512,7 @@ void planner(
             S.plan_target = goal;
             S.plan_valid = !S.current_plan.empty();
         }
-        // apply next action from plan
-        action_ptr[0] = robotposeX;
-        action_ptr[1] = robotposeY;
-
-        while (!S.current_plan.empty() &&
-                S.current_plan.front().x == robotposeX &&
-                S.current_plan.front().y == robotposeY){
-                    S.current_plan.erase(S.current_plan.begin());
-                } //shouldn't ever have duplicates/waiting but just in case
-        
-        if (!S.current_plan.empty()){
-            const Cell& next = S.current_plan.front();
-            action_ptr[0] = next.x;
-            action_ptr[1] = next.y;
-        }
+        next_action_from_plan(robotposeX, robotposeY, action_ptr);
         return;
     }
 
@@ -494,19 +521,9 @@ void planner(
     // the meat and gravy of it all! picking best target to navigate to.
     Cell target = select_best_exploration_target(robot, battery, found);
 
-    //greedy backup
-    int nx = robotposeX;
-    int ny = robotposeY;
-
-    if (goalposeX > robotposeX && cell_free(map, x_size, y_size, robotposeX + 1, robotposeY))
-        nx = robotposeX + 1;
-    else if (goalposeX < robotposeX && cell_free(map, x_size, y_size, robotposeX - 1, robotposeY))
-        nx = robotposeX - 1;
-    else if (goalposeY > robotposeY && cell_free(map, x_size, y_size, robotposeX, robotposeY + 1))
-        ny = robotposeY + 1;
-    else if (goalposeY < robotposeY && cell_free(map, x_size, y_size, robotposeX, robotposeY - 1))
-        ny = robotposeY - 1;
-
-    action_ptr[0] = nx;
-    action_ptr[1] = ny;
+    if (!found) {
+        //retreat
+        
+    }
+    
 }
