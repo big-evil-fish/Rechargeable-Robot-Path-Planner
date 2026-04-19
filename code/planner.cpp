@@ -450,7 +450,15 @@ void set_plan(std::vector<Cell> plan, const Cell& target) {
 MAIN PLANNING LOOP!
 
 -----------*/
-
+/* NOTES:
+right now it should automatically plan to nearby frontier cells 
+so this SHOULD handle the balancing of battery and greedily searching new space,
+however if the planner is currently too slow I think we should not replan when
+out unless we see a new outlet, then just greedily explore the cells and
+track battery/path for return (this can be as simple as just looking at the
+len of the path leading towards our cur frontier cell and assuming we take that
+back??)
+*/
 void planner(
     int* map,
     int x_size,
