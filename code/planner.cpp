@@ -479,7 +479,7 @@ void planner(
     (void)visible_charger_x;
     (void)visible_charger_y;
     ////// initializing things
-    if (!S.initialized || S.x_size != x_size || !S.y_size != y_size){
+    if (!S.initialized || S.x_size != x_size || S.y_size != y_size){
         S.x_size = x_size;
         S.y_size = y_size;
         int N = x_size * y_size;
