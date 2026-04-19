@@ -1,27 +1,35 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from matplotlib.collections import LineCollection
+from matplotlib.colors import ListedColormap
 
 import sys
-
 
 def parse_mapfile(filename):
     with open(filename, 'r') as file:
         assert file.readline().strip() == 'N', "Expected 'N' in the first line"
         x_size_, y_size_ = map(int, file.readline().strip().split(','))
 
-        assert file.readline().strip() == 'C', "Expected 'C' in the third line"
-        collision_thresh = int(file.readline().strip())
+        assert file.readline().strip() == 'D', "Expected D in the third line"
+        sensorRange = int(file.readline().strip())
 
         assert file.readline().strip() == 'R', "Expected 'R' in the fifth line"
         robotX, robotY = map(int, file.readline().strip().split(','))
 
-        assert file.readline().strip() == 'T', "Expected 'T' in the seventh line"
-        target_traj = []
+        assert file.readline().strip() == 'B', "Expected 'B' in the seventh line"
+        robotCMax, robotC = map(int, file.readline().strip().split(','))
+        
+        assert file.readline().strip() == 'G', "Expected 'G' in the ninth line"
+        goalX, goalY = map(int, file.readline().strip().split(','))
+
+        assert file.readline().strip() == 'C', "Expected 'C' in the eleventh line"
+        chargers = []
+        numChargers = file.readline().strip()
         line = file.readline().strip()
         while line != 'M':
-            x, y = map(float, line.split(','))
-            target_traj.append({'x': x, 'y': y})
+            x, y = map(int, line.split(','))
+            chargers.append({'x': x, 'y': y})
             line = file.readline().strip()
 
         costmap_ = []
@@ -31,58 +39,91 @@ def parse_mapfile(filename):
 
         costmap_ = np.asarray(costmap_).T
 
-    return x_size_, y_size_, collision_thresh, robotX, robotY, target_traj, costmap_
-
+    return x_size_, y_size_, robotX, robotY, robotC, robotCMax, goalX, goalY, sensorRange, chargers, costmap_
+    #return worldMap(x_size_, y_size_, robotX, robotY, robotC, robotCMax, goalX, goalY, sensorRange, chargers, costmap_)
 
 def parse_robot_trajectory_file(filename):
     robot_traj = []
     with open(filename, 'r') as file:
         for line in file:
-            t, x, y = map(int, line.strip().split(','))
-            robot_traj.append({'t': t, 'x': x, 'y': y})
+            t, x, y, c = map(int, line.strip().split(','))
+            robot_traj.append({'t': t, 'x': x, 'y': y, 'c': c})
 
     return robot_traj
 
+SPEEDUP = 1
 
-SPEEDUP = 10
+def colored_line_between_pts(x, y, c, ax, **lc_kwargs):
+        points = np.array([x, y]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        lc = LineCollection(segments, **lc_kwargs)
+        lc.set_array(c)
+        return ax.add_collection(lc)
+
+def buildChargermap(chargers, costmap):
+    chargermap = np.zeros_like(costmap)
+    for charger in chargers:
+        #print(f"{charger['x']}, {charger['y']}")
+        chargermap[charger['x'], charger['y']] = 1
+    return chargermap
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Usage: python visualizer.py <map filename>")
         sys.exit(1)
 
-    x_size, y_size, collision_threshold, robotX, robotY, target_trajectory, costmap = parse_mapfile(sys.argv[1])
+    x_size, y_size, robotX, robotY, robotC, robotCMax, goalX, goalY, sensorRange, chargers, costmap = parse_mapfile(sys.argv[1])
+    knownMap = np.zeros_like(costmap)
+    chargermap = buildChargermap(chargers, costmap)
+    chargermap[goalX, goalY] = 2
+    #print(chargermap)
 
     robot_trajectory = parse_robot_trajectory_file('robot_trajectory.txt')
 
     fig, ax = plt.subplots()
 
-    ax.imshow(costmap, cmap='jet')
+    ax.matshow(costmap, zorder=0, cmap='binary')
+    ax.matshow(chargermap, zorder=1,cmap=ListedColormap([(0,0,0,0), (1,0,0,1), (1,0.8,0.6,1)]))
 
-    line1, = ax.plot([], [], lw=2, marker='o', color='b', label='robot')
-    line2, = ax.plot([], [], lw=2, marker='o', color='r', label='target')
+    ax.imshow(knownMap, zorder=2, cmap=ListedColormap([(0,0,0,0.3), (0, 0, 0, 0)]))
 
+    lc = colored_line_between_pts([p['x'] for p in robot_trajectory], 
+                                  [p['y'] for p in robot_trajectory], 
+                                  [p['c'] for p in robot_trajectory], 
+                                  ax, linewidth=4, cmap="winter", zorder=2)
 
     def init():
-        line1.set_data([], [])
-        line2.set_data([], [])
-        return line1, line2
+        lc.set_segments([])
+        return lc
 
+    def update(frame, xarr, yarr, knownMap, x_size, y_size, sensorRange):
+        frame = frame+1 if SPEEDUP == 1 else frame*SPEEDUP
+        
+        # multicolor line following robot path
+        x = xarr[:frame + 1]
+        y = yarr[:frame + 1]
+        points = np.array([x, y]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        lc.set_segments(segments)
 
-    def update(frame):
-        frame *= SPEEDUP
-        line1.set_data([p['x'] for p in robot_trajectory[:frame + 1]], [p['y'] for p in robot_trajectory[:frame + 1]])
+        #x=x[-1]
+        #y=y[-1]
+        #print(f"{x}, {y}")
+        # known map visulization
+        for pos in range(1, frame+1):
+            for i in range(-1*sensorRange, 1+ sensorRange):
+                for j in range(-1*sensorRange, 1+ sensorRange):
+                    if (x[pos]+i)>=0 & (x[pos]+i)<x_size \
+                        & (y[pos]+j)>=0 & (y[pos]+j)<y_size:
+                        knownMap[x[pos]+i, y[pos]+i]=1
 
-        t = robot_trajectory[frame + 1]['t']
-        line2.set_data([p['x'] for p in target_trajectory[:t]], [p['y'] for p in target_trajectory[:t]])
+        return lc, knownMap
 
-        # plt.pause((robot_trajectory[frame+1]['t']-robot_trajectory[frame]['t'])/SPEEDUP)
-        return line1, line2
-
-
-    ani = FuncAnimation(fig, update, frames=(len(robot_trajectory) - 1) // SPEEDUP, init_func=init, blit=False,
+    ani = FuncAnimation(fig, update, fargs=([p['x'] for p in robot_trajectory],
+                        [p['y'] for p in robot_trajectory], knownMap, x_size, y_size, sensorRange),
+                        frames=(len(robot_trajectory) - 1)//SPEEDUP, init_func=init, blit=False,
                         interval=1)
 
-    plt.legend()
     plt.show()
     ani.save("myGIF.gif")
