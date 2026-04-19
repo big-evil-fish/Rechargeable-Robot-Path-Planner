@@ -19,19 +19,18 @@ def parse_mapfile(filename):
 
         assert file.readline().strip() == 'B', "Expected 'B' in the seventh line"
         robotCMax, robotC = map(int, file.readline().strip().split(','))
-        
-        assert file.readline().strip() == 'G', "Expected 'G' in the ninth line"
-        goalX, goalY = map(int, file.readline().strip().split(','))
 
-        assert file.readline().strip() == 'C', "Expected 'C' in the eleventh line"
+        assert file.readline().strip() == 'K', "Expected 'K' in the ninth line"
         chargers = []
         numChargers = file.readline().strip()
         line = file.readline().strip()
-        while line != 'M':
+        while line != 'G':
             x, y = map(int, line.split(','))
             chargers.append({'x': x, 'y': y})
             line = file.readline().strip()
-
+        assert line == 'G', "Expected 'G' in the eleventh line"
+        goalX, goalY = map(int, file.readline().strip().split(','))
+        assert file.readline().strip() == 'M', "Expected 'M'"
         costmap_ = []
         for line in file:
             row = list(map(float, line.strip().split(',')))
