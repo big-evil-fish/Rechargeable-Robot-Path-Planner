@@ -121,9 +121,9 @@ if __name__ == "__main__":
         for pos in range(1, frame+1):
             for i in range(-1*sensorRange, 1+ sensorRange):
                 for j in range(-1*sensorRange, 1+ sensorRange):
-                    if (x[pos]+i)>=0 & (x[pos]+i)<x_size \
-                        & (y[pos]+j)>=0 & (y[pos]+j)<y_size:
-                        knownMap[x[pos]+i, y[pos]+i]=1
+                    if (x[pos]+i)>=0 and (x[pos]+i)<x_size-1 \
+                        and (y[pos]+j)>=0 and (y[pos]+j)<y_size-1:
+                        knownMap[x[pos]+i, y[pos]+j]=1
 
         return lc, knownMap
 
