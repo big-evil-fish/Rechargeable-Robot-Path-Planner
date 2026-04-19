@@ -254,11 +254,9 @@ int main(int argc, char *argv[])
         }
 
         float thresh = 0.5;
-        std::cout << "goalposeX: " << goalposeX << std::endl;
-        std::cout << "goalposeY: " << goalposeY << std::endl;
-        std::cout << "robotposeX: " << robotposeX << std::endl;
-        std::cout << "robotposeY: " << robotposeY << std::endl;
-        std::cout << "Time: " << curr_time << std::endl;
+        std::cout << "goal pose: (" << goalposeX << ", " << goalposeY << ")" << std::endl;
+        std::cout << "robot pose: (" << robotposeX << ", " << robotposeY << ")" << std::endl;
+        std::cout << "Time: " << curr_time << "  battery: " << charge << std::endl;
         if (abs(robotposeX - goalposeX) <= thresh && abs(robotposeY - goalposeY) <= thresh)
         {
             goal_reached = true;
