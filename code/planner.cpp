@@ -323,12 +323,19 @@ std::vector<Cell> astar_with_battery(const Cell& start, const Cell& goal, int st
     return path;
 }
 
+int information_gain(const Cell& f) {
+//TODO
+}
+
+
+
+
 std::vector<Cell> compute_exploration_candidates(){
 //i'm so tired
 }
 
 
-
+//rn doing this explicitly instead of embedding in multigoal A* seach... maybe change later
 Cell select_best_exploration_target(const Cell& robot, int battery, bool& found){
     //grab candidates - what are these?
     // any traversable cell with positive gain where gain is # of unsensed cellsaround it
@@ -336,6 +343,27 @@ Cell select_best_exploration_target(const Cell& robot, int battery, bool& found)
     found = false;
     Cell best{-1, -1};
     double best_score = -1.0;
+
+    for (const Cell& f: candidates){
+        if (f == robot) continue;
+        int my_cost = reachable_cost(robot, f, battery);
+        if (my_cost >= INF || my_cost == 0) continue;
+
+        int my_gain = information_gain(f);
+        if (my_gain == 0) continue;
+
+        int d = S.d_out[idx(f.x, f.y)]; //reminder: distance to nearest outlet!!
+        //trying to nudge towards nearer cells... small bonus
+        double prox  = 1.0+0.1 / (1.0+(d >= INF ? 1e9 : d));
+        double score = (static_cast<double>(my_gain) / my_cost) * prox;
+
+        if (score < best_score){
+            best_score = score;
+            best = f;
+            found = true;
+        }
+    }
+    return best;
 }
 
 
