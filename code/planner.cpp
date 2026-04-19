@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <iostream>
 
 #define GETMAPINDEX(X, Y, XSIZE, YSIZE) ((Y - 1) * (XSIZE) + (X - 1))
 // Same encoding as runtest's map[] after load: 1 = traversable, 0 = blocked
@@ -584,6 +585,7 @@ void planner(
     //_________SECTION 2: updating outlet path knowledge _____________
     //we're keeping track of shortest paths between outlets but these may update
     if (S.known_outlets.size() != S.last_outlet_set.size()) {
+        std::cout << "New outlet found!";
         recompute_outlet_structures();
         S.last_outlet_set = S.known_outlets;
         //need to replan if new outlet discovered
