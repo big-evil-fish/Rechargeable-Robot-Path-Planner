@@ -52,6 +52,8 @@ def parse_robot_trajectory_file(filename):
     with open(filename, 'r') as file:
         for line in file:
             t, x, y, c = map(int, line.strip().split(','))
+            x -=1
+            y -=1
             robot_traj.append({'t': t, 'x': x, 'y': y, 'c': c})
 
     return robot_traj
