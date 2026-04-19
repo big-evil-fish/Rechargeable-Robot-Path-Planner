@@ -4,10 +4,14 @@
  *
  *=================================================================*/
 #include "planner.h"
+#include <algorithm>
 #include <cstdlib>
-#include <vector>
-#include <unordered_set>
+#include <cstring>
+#include <limits>
 #include <queue>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #define GETMAPINDEX(X, Y, XSIZE, YSIZE) ((Y - 1) * (XSIZE) + (X - 1))
 #define OBSTACLE 1
@@ -78,13 +82,16 @@ struct PlannerState{
 PlannerState S;
 
 /* SMALL HELPERS! */
-inline int idx(int x, int y)          { return y * S.x_size + x; }
-inline bool in_bounds(int x, int y)   { return x >= 0 && x < S.x_size && y >= 0 && y < S.y_size; }
+// runtest uses 1-index coordinates for some reason
+inline int idx(int x, int y) { return (y - 1) * S.x_size + (x - 1); }
+inline bool in_bounds(int x, int y) {
+    return x >= 1 && x <= S.x_size && y >= 1 && y <= S.y_size;
+}
 inline bool in_bounds(const Cell& c)  { return in_bounds(c.x, c.y); }
 
 inline bool traversable(int x, int y) {
     if (!in_bounds(x, y)) return false;
-    return S.static_map[idx(x, y)] != OBSTACLE;
+    return S.static_map[idx(x, y)] == OBSTACLE;
 }
 inline bool traversable(const Cell& c) { return traversable(c.x, c.y); }
 
@@ -355,8 +362,8 @@ int count = 0;
 std::vector<Cell> compute_exploration_candidates(){
     std::vector<Cell> result;
     std::vector<char> candidate(S.x_size * S.y_size, 0);
-    for (int y = 0; y < S.y_size; y++) {
-        for (int x = 0; x < S.x_size; x++) {
+    for (int y = 1; y <= S.y_size; y++) {
+        for (int x = 1; x <= S.x_size; x++) {
             if (S.sensed[idx(x, y)]) continue;
             for (int dx = -SENSOR_RAD; dx <= SENSOR_RAD; ++dx) {
                 for (int dy = -SENSOR_RAD; dy <= SENSOR_RAD; ++dy) {
@@ -368,8 +375,8 @@ std::vector<Cell> compute_exploration_candidates(){
             }
         }
     }
-    for (int y = 0; y < S.y_size; ++y) {
-        for (int x = 0; x < S.x_size; ++x) {
+    for (int y = 1; y <= S.y_size; ++y) {
+        for (int x = 1; x <= S.x_size; ++x) {
             if (candidate[idx(x, y)]) result.push_back({x, y});
         }
     }
@@ -399,7 +406,7 @@ Cell select_best_exploration_target(const Cell& robot, int battery, bool& found)
         double prox  = 1.0+0.1 / (1.0+(d >= INF ? 1e9 : d));
         double score = (static_cast<double>(my_gain) / my_cost) * prox;
 
-        if (score < best_score){
+        if (score > best_score){
             best_score = score;
             best = f;
             found = true;
