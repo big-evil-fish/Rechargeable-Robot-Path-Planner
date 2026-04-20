@@ -374,20 +374,6 @@ std::vector<Cell> build_plan_from_waypoints(const std::vector<Cell>& waypoints){
 
 
 
-//very self explanatory
-Cell nearest_reachable_outlet(const Cell& robot, int battery, bool& found) {
-    found = false;
-    Cell best{-1, -1};
-    int  best_d = INF;
-    auto from_r = bounded_dijkstra(robot, battery);
-    for (const Cell& o : S.outlet_list) {
-        int d = from_r[idx(o.x, o.y)];
-        if (d < best_d) {best_d = d; best = o; found = true;}
-    }
-    return best;
-}
-
-
 //super simple helper, just checking for # of non-sensed cells around a cell
 int information_gain(const Cell& f) {
 int count = 0;
@@ -433,96 +419,77 @@ struct FrontierChoice {
     std::vector<Cell> waypoints;
 };
 
+//returns target with the waypoint route to it
+//same as select best exploration with minor changes
+FrontierChoice select_best_exploration_target(const Cell& robot,
+    int battery, const std::vector<int>& from_robot) {
 
-//rn doing this explicitly instead of embedding in multigoal A* seach... maybe change later
-Cell select_best_exploration_target(const Cell& robot, int battery, bool& found){
-    //grab candidates - what are these?
-    // any traversable cell with positive gain where gain is # of unsensed cellsaround it
+    FrontierChoice choice;
     auto candidates = compute_exploration_candidates();
-    found = false;
-    Cell best{-1, -1};
     double best_score = -1.0;
-
-    /* MAKING THIS A VARIABLE SO THAT WE CAN CHANGE IT LATER */
-    /*LIKELY NOT NEEDED, REMOVE LATER*/
-    /////constexpr int RETREAT_MARGIN = 1;
-
-    //precomputing cost from robot to all cells don't know why we were checking A* for each candidate earlier
-    auto from_robot = bounded_dijkstra(robot, battery);
-
-
-    for (const Cell& f: candidates){
+    constexpr int RETREAT_MARGIN = 2;
+ 
+    for (const Cell& f: candidates) {
         if (f == robot) continue;
-
-        int f_i = idx(f.x, f.y);
-        int direct = from_robot[f_i]; //direct cost
-        int retreat = S.d_out[f_i]; //cost from f to nearest outlet
-
-        int via_outlet_cost = INF;
-        int via_outlet_arrival = -1; //arrival battery!
-        //checking the reachable cost but w precomputed stuff mostly
-        if (S.nearest_outlet_idx[f_i] >= 0){
-            int tail_idx = S.nearest_outlet_idx[f_i];
-            int tail = S.d_out[f_i];
-            for (int i = 0; i < static_cast<int>(S.outlet_list.size()); i++){
-                const Cell& oi = S.outlet_list[i];
-                int leg1 = from_robot[idx(oi.x, oi.y)];
-                if (leg1 >= INF) continue;
-                int middle = S.D_outlet[i][tail_idx];
-                if (middle >= INF) continue;
-                long long total = (long long)leg1 + middle + tail;
-                if (total < via_outlet_cost) via_outlet_cost = (int)total;
-            }
-            if (via_outlet_cost < INF) via_outlet_arrival = MAX_BATTERY - tail;
-        }
-
-
-        //////
-        int cost;
+        int fi = idx(f.x, f.y);
+ 
+        ReachableResult rr = reachable_cost_and_route(robot, f, battery, from_robot);
+        if (rr.cost >= INF || rr.cost == 0) continue;
+ 
+        // arrival is based on direct vs outlet
         int arrival_battery;
-        //CASE 1: direct path
-        //would be weird if direct were ever more than via outlet but just in case
-        if (direct < INF && direct <= via_outlet_cost){
-            cost = direct;
-            arrival_battery = battery - direct;
+        if (rr.waypoints.size() == 2) {
+            // direct path
+            arrival_battery = battery - rr.cost;
+        } else {
+            // via outlet chain: last hop is from final outlet to f
+            // starting fully charged.
+            const Cell& last_outlet = rr.waypoints[rr.waypoints.size() - 2];
+            int last_leg = octile(last_outlet, f);
+            // last_leg should equal d_out[fi] since we chose nearest outlet.
+            // use the precomputed value
+            arrival_battery = MAX_BATTERY - S.d_out[fi];
+            (void)last_leg;
         }
-        //CASE 2: go through outlet network
-        else if (via_outlet_cost < INF){
-            cost = via_outlet_cost;
-            arrival_battery = via_outlet_arrival;
-        }
-        //CASE 3: not reachable
-        else {
-            continue;
-        }
-        if (cost == 0) continue;
-
-
-        ///actually checking if can retreat
+ 
+        int retreat = S.d_out[fi];
         if (retreat >= INF) continue;
-
-
-        //exploration budget after you arrive at cell
+        if (retreat + RETREAT_MARGIN > arrival_battery) continue;
+ 
         int exploration_budget = arrival_battery - retreat;
         if (exploration_budget < 0) exploration_budget = 0;
-        //trying to bias towards being able to explore more after arrival, hopefully not outweighting nearest
         double lookahead_factor = 1.0 + static_cast<double>(exploration_budget) / MAX_BATTERY;
-
+ 
         int gain = information_gain(f);
         if (gain == 0) continue;
-
-        double score = (static_cast<double>(gain) * lookahead_factor) / cost; //should i add prox back ??? 
-
-        if (score > best_score){
+ 
+        double score = (static_cast<double>(gain) * lookahead_factor) / rr.cost;
+        if (score > best_score) {
             best_score = score;
-            best = f;
-            found = true;
+            choice.found = true;
+            choice.target = f;
+            choice.waypoints = std::move(rr.waypoints);
         }
     }
-    return best;
+    return choice;
+    }
+
+struct OutletChoice {
+bool found = false;
+Cell outlet{-1, -1};
+std::vector<Cell> waypoints;
+};
+OutletChoice nearest_reachable_outlet(const Cell& robot,
+                                    const std::vector<int>& from_robot) {
+    OutletChoice c;
+    int best_d = INF;
+    for (const Cell& o : S.outlet_list) {
+        int d = from_robot[idx(o.x, o.y)];
+        if (d < best_d) { best_d = d; c.outlet = o; c.found = true; }
+    }
+    if (c.found) c.waypoints = {robot, c.outlet};
+    return c;
 }
-
-
 
 void next_action_from_plan(int rx, int ry, int* action_ptr) {
     action_ptr[0] = rx;
