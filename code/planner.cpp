@@ -19,8 +19,6 @@
 #define RUNTEST_MAP_FREE 1
 
 //____ROBOT CONSTANTS_____
-constexpr int SENSOR_RAD = 2;
-constexpr int MAX_BATTERY = 100;
 constexpr int STEP_COST = 1; //right now it's 1 for all neighbors
 // ^ if keeping this - switch to BFS
 constexpr int INF = std::numeric_limits<int>::max() / 4;
@@ -77,6 +75,9 @@ struct PlannerState{
     
     bool initialized = false;
     const int* map_copy_src = nullptr;
+
+    int max_battery = 0;
+    int sensor_range = 0;
 };
 
 PlannerState S;
@@ -167,13 +168,13 @@ void recompute_outlet_structures(){
         PQNode top = pq.top(); pq.pop();
         int ci = idx(top.c.x, top.c.y);
         if (top.f > S.d_out[ci]) continue;
-        if (top.f >= MAX_BATTERY) continue;
+        if (top.f >= S.max_battery) continue;
         for (int k = 0; k < 8; k++) {
             int nx = top.c.x + NDX[k], ny = top.c.y + NDY[k];
             if (!traversable(nx, ny)) continue;
             int ni = idx(nx, ny);
             int nd = top.f + STEP_COST;
-            if (nd <= MAX_BATTERY && nd < S.d_out[ni]) {
+            if (nd <= S.max_battery && nd < S.d_out[ni]) {
                 S.d_out[ni] = nd;
                 S.nearest_outlet_idx[ni] = S.nearest_outlet_idx[ci];
                 pq.push({nd, {nx, ny}});
@@ -184,12 +185,12 @@ void recompute_outlet_structures(){
     std::vector<std::vector<int>> edges(O, std::vector<int>(O, INF));
     for (int i = 0; i < O; i++) edges[i][i] = 0;
     for (int i = 0; i < O; i++) {
-        auto dists = bounded_dijkstra(S.outlet_list[i], MAX_BATTERY);
+        auto dists = bounded_dijkstra(S.outlet_list[i], S.max_battery);
         for (int j = 0; j < O; j++) {
             if (i == j) continue;
             const Cell& oj = S.outlet_list[j];
             int d = dists[idx(oj.x, oj.y)];
-            if (d <= MAX_BATTERY) edges[i][j] = d;
+            if (d <= S.max_battery) edges[i][j] = d;
         }
     }
 
@@ -309,7 +310,7 @@ int reachable_cost(const Cell& a, const Cell& b, int B,
 //I KNOW HOW TO WRITE A*
 // ============================================================
 // Plain A* returning the actual path (no battery logic).
-// Used for each leg between waypoints, where leg length <= MAX_BATTERY
+// Used for each leg between waypoints, where leg length <= max battery
 // is guaranteed by construction.
 // ============================================================
 std::vector<Cell> astar_path(const Cell& start, const Cell& goal) {
@@ -391,8 +392,8 @@ Cell nearest_reachable_outlet(const Cell& robot, int battery, bool& found) {
 //super simple helper, just checking for # of non-sensed cells around a cell
 int information_gain(const Cell& f) {
 int count = 0;
-    for (int dx = -SENSOR_RAD; dx <= SENSOR_RAD; ++dx) {
-        for (int dy = -SENSOR_RAD; dy <= SENSOR_RAD; ++dy) {
+    for (int dx = -S.sensor_range; dx <= S.sensor_range; ++dx) {
+        for (int dy = -S.sensor_range; dy <= S.sensor_range; ++dy) {
             int x = f.x + dx, y = f.y + dy;
             if (in_bounds(x, y) && !S.sensed[idx(x, y)]) ++count;
         }
@@ -408,8 +409,8 @@ std::vector<Cell> compute_exploration_candidates(){
     for (int y = 1; y <= S.y_size; y++) {
         for (int x = 1; x <= S.x_size; x++) {
             if (S.sensed[idx(x, y)]) continue;
-            for (int dx = -SENSOR_RAD; dx <= SENSOR_RAD; ++dx) {
-                for (int dy = -SENSOR_RAD; dy <= SENSOR_RAD; ++dy) {
+            for (int dx = -S.sensor_range; dx <= S.sensor_range; ++dx) {
+                for (int dy = -S.sensor_range; dy <= S.sensor_range; ++dy) {
                     int cx = x + dx, cy = y + dy;
                     if (in_bounds(cx, cy) && traversable(cx, cy)) {
                         candidate[idx(cx, cy)] = 1;
@@ -462,7 +463,7 @@ FrontierChoice select_best_exploration_target(const Cell& robot,
             int last_leg = octile(last_outlet, f);
             // last_leg should equal d_out[fi] since we chose nearest outlet.
             // use the precomputed value
-            arrival_battery = MAX_BATTERY - S.d_out[fi];
+            arrival_battery = S.max_battery - S.d_out[fi];
             (void)last_leg;
         }
  
@@ -472,7 +473,7 @@ FrontierChoice select_best_exploration_target(const Cell& robot,
  
         int exploration_budget = arrival_battery - retreat;
         if (exploration_budget < 0) exploration_budget = 0;
-        double lookahead_factor = 1.0 + static_cast<double>(exploration_budget) / MAX_BATTERY;
+        double lookahead_factor = 1.0 + static_cast<double>(exploration_budget) / S.max_battery;
  
         int gain = information_gain(f);
         if (gain == 0) continue;
@@ -561,6 +562,8 @@ void planner(
     int robotposeX,
     int robotposeY,
     int current_charge,
+    int charge_max,
+    int detection_radius,
     int goalposeX,
     int goalposeY,
     int num_visible_chargers,
@@ -568,11 +571,6 @@ void planner(
     const int* visible_charger_y,
     int* action_ptr)
 {
-    //compiler warning nonsense
-    (void)current_charge;
-    (void)num_visible_chargers;
-    (void)visible_charger_x;
-    (void)visible_charger_y;
     ////// initializing things
     if (!S.initialized || S.x_size != x_size || S.y_size != y_size || S.map_copy_src != map) {
         S.x_size = x_size;
@@ -594,11 +592,14 @@ void planner(
         S.initialized = true;
     }
 
+    S.max_battery = charge_max;
+    S.sensor_range = detection_radius;
+
     //_______SECTION 1: just updating info based on new info ________________
 
     //updating sensed
-    for (int dx = -SENSOR_RAD; dx <= SENSOR_RAD; dx++){
-        for (int dy = -SENSOR_RAD; dy <= SENSOR_RAD; dy++){
+    for (int dx = -S.sensor_range; dx <= S.sensor_range; dx++){
+        for (int dy = -S.sensor_range; dy <= S.sensor_range; dy++){
             int x = robotposeX+dx, y = robotposeY+dy;
             if (in_bounds(x, y)) S.sensed[idx(x, y)] = 1;
         }
@@ -626,7 +627,7 @@ void planner(
     Cell goal {goalposeX,  goalposeY};
     int battery = current_charge;
     //recharging if on outlet
-    if (S.known_outlets.count(robot)) battery = MAX_BATTERY;
+    if (S.known_outlets.count(robot)) battery = S.max_battery;
 
     //getting all distances from robot at once
     std::vector<int> from_robot = bounded_dijkstra(robot, battery);
