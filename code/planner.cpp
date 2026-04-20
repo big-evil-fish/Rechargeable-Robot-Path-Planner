@@ -72,6 +72,7 @@ struct PlannerState{
     std::vector<int>  nearest_outlet_idx;
     std::vector<Cell> outlet_list; //ordered version of known_outlets for better checking
     std::vector<std::vector<int>> D_outlet; //all-pairs of best distances between outlets!
+    std::vector<std::vector<int>> D_outlet_next; //predecessors D_outlet
 
     //plan specific state info
     std::vector<Cell> current_plan;
@@ -152,6 +153,7 @@ void recompute_outlet_structures(){
 
     if (O == 0) { //occurs once at start
         S.D_outlet.clear();
+        S.D_outlet_next.clear();
         return;
     }
     //outlet-to-outlet dists
@@ -195,21 +197,113 @@ void recompute_outlet_structures(){
         }
     }
 
-    //floyd-warshall on graph for final all_pairs
+    //floyd-warshall on graph for final all_pairs NOW TRACKS PREDECESSORS
     S.D_outlet = edges;
-    for (int k = 0; k < O; ++k) {
+    S.D_outlet_next.assign(O, std::vector<int>(O, -1));
+    for (int i = 0; i < O; ++i) {
+        for (int j = 0; j < O; ++j) {
+            if (i != j && edges[i][j] < INF) S.D_outlet_next[i][j] = j;
+        }
+    }
+    for (int k = 0; k < O; k++) {
         for (int i = 0; i < O; i++) {
             if (S.D_outlet[i][k] >= INF) continue;
             for (int j = 0; j < O; j++) {
                 if (S.D_outlet[k][j] >= INF) continue;
                 int via = S.D_outlet[i][k] + S.D_outlet[k][j];
-                if (via < S.D_outlet[i][j]) S.D_outlet[i][j] = via;
+                if (via < S.D_outlet[i][j]) {
+                    S.D_outlet[i][j]      = via;
+                    // first hop from i toward j is now the first hop from i toward k (rest is tracked)
+                    S.D_outlet_next[i][j] = S.D_outlet_next[i][k];
+                }
             }
         }
     }
     // NOTE: MAYBE SHOULD SWITCH TO JOHNSON'S.. ??
     // FLOYD-WARSHALL IS BETTER FOR DENSE GRAPHS... THIS IS GOING TO BE SPARSE?
 }
+
+//reconstructs the outlet chain from i to j as list of outlet indices w both endpoints
+//empty if it cant find one !
+std::vector<int> outlet_chain(int i, int j) {
+    std::vector<int> chain;
+    if (i < 0 || j < 0) return chain;
+    if (i == j) { chain.push_back(i); return chain; }
+    if (S.D_outlet_next[i][j] < 0) return chain;
+ 
+    chain.push_back(i);
+    int cur = i;
+    while (cur != j) {
+        int nxt = S.D_outlet_next[cur][j];
+        if (nxt < 0) { chain.clear(); return chain;}
+        chain.push_back(nxt);
+        cur = nxt;
+        if (chain.size() > S.outlet_list.size() + 1) {chain.clear(); return chain;}  // safety
+    }
+    return chain;
+}
+
+/// keeping track of waypoint list (which outlets to visit) on path and cost of path :)
+struct ReachableResult {
+    int cost;
+    std::vector<Cell> waypoints;
+};
+
+ReachableResult reachable_cost_and_route(const Cell& a, const Cell& b, int B, const std::vector<int>& from_a){
+    ReachableResult result;
+    result.cost = INF;
+    // 1: direct cost w no outlet network stufF
+    int bi = idx(b.x, b.y);
+    int direct = from_a[bi];
+    //2 : outlet network
+    int best_via = INF; //same as best_via outlet from the old version but i dont wanna type lol
+    int best_i = -1;
+    int best_tail_j = -1;
+
+    if (S.nearest_outlet_idx[bi] >= 0){
+        int tail_idx = S.nearest_outlet_idx[bi];
+        int tail = S.d_out[bi];
+
+        for (int i = 0; i < static_cast<int>(S.outlet_list.size()); i++){
+            const Cell& oi = S.outlet_list[i];
+            int leg1 = from_a[idx(oi.x, oi.y)];
+            if (leg1 >= INF) continue;
+            int middle = S.D_outlet[i][tail_idx];
+            if (middle >= INF) continue;
+            long long total = (long long)leg1 + middle + tail;
+            if (total < best_via){
+                best_via = (int) total;
+                best_i = i;
+                best_tail_j = tail_idx;
+            }
+        }
+    }
+    //picking bwetween things just like before
+    //direct is cheapest path
+    if (direct < INF && direct <= best_via) {
+        result.cost = direct;
+        result.waypoints = {a, b};
+        return result;
+    }
+    // else best to go through outlets
+    if (best_via < INF) {
+        result.cost = best_via;
+        std::vector<int> chain = outlet_chain(best_i, best_tail_j);
+        if (chain.empty()) {
+            // should not happen if middle < INF anyway!
+            result.cost = INF;
+            return result;
+        }
+        result.waypoints.push_back(a);
+        for (int oi : chain) result.waypoints.push_back(S.outlet_list[oi]);
+        result.waypoints.push_back(b);
+        return result;
+    }
+    //////// didn't find
+    return result;
+}
+
+
 
 
 //just normal A* from a to b but aborts if it exceeds max_cost (battery usage in this context)
