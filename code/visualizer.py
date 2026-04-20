@@ -5,6 +5,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import ListedColormap
 
 import sys
+from pathlib import Path
 
 def parse_mapfile(filename):
     with open(filename, 'r') as file:
@@ -90,7 +91,10 @@ if __name__ == "__main__":
         print("Usage: python visualizer.py <map filename>")
         sys.exit(1)
 
-    x_size, y_size, robotX, robotY, robotC, robotCMax, goalX, goalY, sensorRange, chargers, costmap = parse_mapfile(sys.argv[1])
+    map_path = Path(sys.argv[1])
+    gif_path = map_path.with_suffix(".gif")
+
+    x_size, y_size, robotX, robotY, robotC, robotCMax, goalX, goalY, sensorRange, chargers, costmap = parse_mapfile(str(map_path))
     knownMap = np.zeros_like(costmap)
     chargermap = buildChargermap(chargers, costmap)
     chargermap[goalX, goalY] = 2
@@ -150,4 +154,4 @@ if __name__ == "__main__":
                         interval=1)
     plt.colorbar(lc)
     plt.show()
-    ani.save("myGIF.gif")
+    ani.save(str(gif_path))
