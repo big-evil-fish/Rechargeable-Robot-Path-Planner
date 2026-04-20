@@ -19,8 +19,6 @@
 #define RUNTEST_MAP_FREE 1
 
 //____ROBOT CONSTANTS_____
-constexpr int SENSOR_RAD = 2;
-constexpr int MAX_BATTERY = 100;
 constexpr int STEP_COST = 1; //right now it's 1 for all neighbors
 // ^ if keeping this - switch to BFS
 constexpr int INF = std::numeric_limits<int>::max() / 4;
@@ -48,12 +46,8 @@ struct CellHash {
 
 struct PQNode {
     int f;
-    int tiebreak;
     Cell c;
-    bool operator>(const PQNode& o) const {
-        if (f != o.f) return f > o.f;
-        return tiebreak > o.tiebreak;
-    }
+    bool operator>(const PQNode& o) const { return f > o.f; }
 };
 
 /* _______STATE! ______*/
@@ -72,6 +66,7 @@ struct PlannerState{
     std::vector<int>  nearest_outlet_idx;
     std::vector<Cell> outlet_list; //ordered version of known_outlets for better checking
     std::vector<std::vector<int>> D_outlet; //all-pairs of best distances between outlets!
+    std::vector<std::vector<int>> D_outlet_next; //predecessors D_outlet
 
     //plan specific state info
     std::vector<Cell> current_plan;
@@ -80,6 +75,9 @@ struct PlannerState{
     
     bool initialized = false;
     const int* map_copy_src = nullptr;
+
+    int max_battery = 0;
+    int sensor_range = 0;
 };
 
 PlannerState S;
@@ -118,7 +116,7 @@ std::vector<int> bounded_dijkstra(const Cell& source, int max_dist) {
     dist[idx(source.x, source.y)] = 0;
  
     std::priority_queue<PQNode, std::vector<PQNode>, std::greater<PQNode>> pq;
-    pq.push({0, 0, source});
+    pq.push({0, source});
  
     while (!pq.empty()) {
         PQNode top = pq.top(); pq.pop();
@@ -130,7 +128,7 @@ std::vector<int> bounded_dijkstra(const Cell& source, int max_dist) {
             int nd = top.f + STEP_COST;
             if (nd <= max_dist && nd < dist[idx(nx, ny)]) {
                 dist[idx(nx, ny)] = nd;
-                pq.push({nd, 0, {nx, ny}});
+                pq.push({nd, {nx, ny}});
             }
         }
     }
@@ -152,6 +150,7 @@ void recompute_outlet_structures(){
 
     if (O == 0) { //occurs once at start
         S.D_outlet.clear();
+        S.D_outlet_next.clear();
         return;
     }
     //outlet-to-outlet dists
@@ -163,22 +162,22 @@ void recompute_outlet_structures(){
         if (!in_bounds(o)) continue;
         S.d_out[idx(o.x, o.y)] = 0;
         S.nearest_outlet_idx[idx(o.x, o.y)] = i;
-        pq.push({0, 0, o});
+        pq.push({0, o});
     }
     while (!pq.empty()) {
         PQNode top = pq.top(); pq.pop();
         int ci = idx(top.c.x, top.c.y);
         if (top.f > S.d_out[ci]) continue;
-        if (top.f >= MAX_BATTERY) continue;
+        if (top.f >= S.max_battery) continue;
         for (int k = 0; k < 8; k++) {
             int nx = top.c.x + NDX[k], ny = top.c.y + NDY[k];
             if (!traversable(nx, ny)) continue;
             int ni = idx(nx, ny);
             int nd = top.f + STEP_COST;
-            if (nd <= MAX_BATTERY && nd < S.d_out[ni]) {
+            if (nd <= S.max_battery && nd < S.d_out[ni]) {
                 S.d_out[ni] = nd;
                 S.nearest_outlet_idx[ni] = S.nearest_outlet_idx[ci];
-                pq.push({nd, 0, {nx, ny}});
+                pq.push({nd, {nx, ny}});
             }
         }
     }
@@ -186,24 +185,34 @@ void recompute_outlet_structures(){
     std::vector<std::vector<int>> edges(O, std::vector<int>(O, INF));
     for (int i = 0; i < O; i++) edges[i][i] = 0;
     for (int i = 0; i < O; i++) {
-        auto dists = bounded_dijkstra(S.outlet_list[i], MAX_BATTERY);
+        auto dists = bounded_dijkstra(S.outlet_list[i], S.max_battery);
         for (int j = 0; j < O; j++) {
             if (i == j) continue;
             const Cell& oj = S.outlet_list[j];
             int d = dists[idx(oj.x, oj.y)];
-            if (d <= MAX_BATTERY) edges[i][j] = d;
+            if (d <= S.max_battery) edges[i][j] = d;
         }
     }
 
-    //floyd-warshall on graph for final all_pairs
+    //floyd-warshall on graph for final all_pairs NOW TRACKS PREDECESSORS
     S.D_outlet = edges;
-    for (int k = 0; k < O; ++k) {
+    S.D_outlet_next.assign(O, std::vector<int>(O, -1));
+    for (int i = 0; i < O; ++i) {
+        for (int j = 0; j < O; ++j) {
+            if (i != j && edges[i][j] < INF) S.D_outlet_next[i][j] = j;
+        }
+    }
+    for (int k = 0; k < O; k++) {
         for (int i = 0; i < O; i++) {
             if (S.D_outlet[i][k] >= INF) continue;
             for (int j = 0; j < O; j++) {
                 if (S.D_outlet[k][j] >= INF) continue;
                 int via = S.D_outlet[i][k] + S.D_outlet[k][j];
-                if (via < S.D_outlet[i][j]) S.D_outlet[i][j] = via;
+                if (via < S.D_outlet[i][j]) {
+                    S.D_outlet[i][j]      = via;
+                    // first hop from i toward j is now the first hop from i toward k (rest is tracked)
+                    S.D_outlet_next[i][j] = S.D_outlet_next[i][k];
+                }
             }
         }
     }
@@ -211,67 +220,160 @@ void recompute_outlet_structures(){
     // FLOYD-WARSHALL IS BETTER FOR DENSE GRAPHS... THIS IS GOING TO BE SPARSE?
 }
 
-
-//just normal A* from a to b but aborts if it exceeds max_cost (battery usage in this context)
-int bounded_astar_cost(const Cell& a, const Cell& b, int max_cost) {
-    if (!traversable(a) || !traversable(b)) return INF; if (a == b) return 0;
-    std::unordered_map<Cell, int, CellHash> g;
-    g[a] = 0;
-    std::priority_queue<PQNode, std::vector<PQNode>, std::greater<PQNode>> pq;
-    pq.push({octile(a, b), 0, a});
+//reconstructs the outlet chain from i to j as list of outlet indices w both endpoints
+//empty if it cant find one !
+std::vector<int> outlet_chain(int i, int j) {
+    std::vector<int> chain;
+    if (i < 0 || j < 0) return chain;
+    if (i == j) { chain.push_back(i); return chain; }
+    if (S.D_outlet_next[i][j] < 0) return chain;
  
-    while (!pq.empty()) {
-        PQNode top = pq.top(); pq.pop();
-        if (top.f > max_cost) return INF;
-        auto found_it = g.find(top.c);
-        int gc = (found_it == g.end()) ? INF : found_it->second;
-        if (top.f - octile(top.c, b) > gc) continue;
-        if (top.c == b) return gc;
- 
-        for (int k = 0; k < 8; k++) {
-            int nx = top.c.x + NDX[k], ny = top.c.y + NDY[k];
-            Cell n{nx, ny};
-            if (!traversable(n)) continue;
-            int ng = gc + STEP_COST;
-            if (ng > max_cost) continue;
+    chain.push_back(i);
+    int cur = i;
+    while (cur != j) {
+        int nxt = S.D_outlet_next[cur][j];
+        if (nxt < 0) { chain.clear(); return chain;}
+        chain.push_back(nxt);
+        cur = nxt;
+        if (chain.size() > S.outlet_list.size() + 1) {chain.clear(); return chain;}  // safety
+    }
+    return chain;
+}
 
-            auto found_it2 = g.find(n);
-            if (found_it2 == g.end() || ng < found_it2->second) {
-                g[n] = ng;
-                pq.push({ng + octile(n, b), 0, n});
+/// keeping track of waypoint list (which outlets to visit) on path and cost of path :)
+struct ReachableResult {
+    int cost;
+    std::vector<Cell> waypoints;
+};
+
+ReachableResult reachable_cost_and_route(const Cell& a, const Cell& b, int B, const std::vector<int>& from_a){
+    ReachableResult result;
+    result.cost = INF;
+    // 1: direct cost w no outlet network stufF
+    int bi = idx(b.x, b.y);
+    int direct = from_a[bi];
+    //2 : outlet network
+    int best_via = INF; //same as best_via outlet from the old version but i dont wanna type lol
+    int best_i = -1;
+    int best_tail_j = -1;
+
+    if (S.nearest_outlet_idx[bi] >= 0){
+        int tail_idx = S.nearest_outlet_idx[bi];
+        int tail = S.d_out[bi];
+
+        for (int i = 0; i < static_cast<int>(S.outlet_list.size()); i++){
+            const Cell& oi = S.outlet_list[i];
+            int leg1 = from_a[idx(oi.x, oi.y)];
+            if (leg1 >= INF) continue;
+            int middle = S.D_outlet[i][tail_idx];
+            if (middle >= INF) continue;
+            long long total = (long long)leg1 + middle + tail;
+            if (total < best_via){
+                best_via = (int) total;
+                best_i = i;
+                best_tail_j = tail_idx;
             }
         }
     }
-    return INF;
+    //picking bwetween things just like before
+    //direct is cheapest path
+    if (direct < INF && direct <= best_via) {
+        result.cost = direct;
+        result.waypoints = {a, b};
+        return result;
+    }
+    // else best to go through outlets
+    if (best_via < INF) {
+        result.cost = best_via;
+        std::vector<int> chain = outlet_chain(best_i, best_tail_j);
+        if (chain.empty()) {
+            // should not happen if middle < INF anyway!
+            result.cost = INF;
+            return result;
+        }
+        result.waypoints.push_back(a);
+        for (int oi : chain) result.waypoints.push_back(S.outlet_list[oi]);
+        result.waypoints.push_back(b);
+        return result;
+    }
+    //////// didn't find
+    return result;
 }
 
-int reachable_cost(const Cell& a, const Cell& b, int B) {
-    int direct = bounded_astar_cost(a, b, B); //direct path w/o going through other cells
- 
-    int via = INF;
-    int bi = idx(b.x, b.y);
-    //for each reachable outlet get cost if we go through that outlet
-    if (S.nearest_outlet_idx[bi] >= 0) {
-        int tail_idx = S.nearest_outlet_idx[bi];
-        int tail = S.d_out[bi];
- 
-        auto from_a = bounded_dijkstra(a, B);
- 
-        for (int i = 0; i < static_cast<int>(S.outlet_list.size()); ++i) {
-            const Cell& oi = S.outlet_list[i];
+int reachable_cost(const Cell& a, const Cell& b, int B,
+                   const std::vector<int>& from_a) {
+    ReachableResult r = reachable_cost_and_route(a, b, B, from_a);
+    return r.cost;
+}
 
-            int leg1 = from_a[idx(oi.x, oi.y)];
-            if (leg1 >= INF) continue;
-
-            int middle = S.D_outlet[i][tail_idx];
-            if (middle >= INF) continue;
-
-            long long total = (long long)leg1 + middle + tail;
-            if (total < via) via = static_cast<int>(total);
+//I MADE CLAUDE GENERATE THIS A* FUNCTION (REPLACE WITH MY OWN LATER)
+//I KNOW HOW TO WRITE A*
+// ============================================================
+// Plain A* returning the actual path (no battery logic).
+// Used for each leg between waypoints, where leg length <= max battery
+// is guaranteed by construction.
+// ============================================================
+std::vector<Cell> astar_path(const Cell& start, const Cell& goal) {
+    std::vector<Cell> path;
+    if (!traversable(start) || !traversable(goal)) return path;
+    if (start == goal) { path.push_back(start); return path; }
+ 
+    std::unordered_map<Cell, int, CellHash>  g;
+    std::unordered_map<Cell, Cell, CellHash> parent;
+    g[start] = 0;
+ 
+    std::priority_queue<PQNode, std::vector<PQNode>, std::greater<PQNode>> pq;
+    pq.push({octile(start, goal), start});
+ 
+    while (!pq.empty()) {
+        PQNode top = pq.top(); pq.pop();
+        Cell c = top.c;
+        int gc = g[c];
+        if (top.f - octile(c, goal) > gc) continue;
+        if (c == goal) {
+            for (Cell cur = goal; ; ) {
+                path.push_back(cur);
+                auto it = parent.find(cur);
+                if (it == parent.end()) break;
+                cur = it->second;
+            }
+            std::reverse(path.begin(), path.end());
+            return path;
+        }
+        for (int k = 0; k < 8; ++k) {
+            int nx = c.x + NDX[k], ny = c.y + NDY[k];
+            Cell n{nx, ny};
+            if (!traversable(n)) continue;
+            int ng = gc + STEP_COST;
+            auto it2 = g.find(n);
+            if (it2 == g.end() || ng < it2->second) {
+                g[n]      = ng;
+                parent[n] = c;
+                pq.push({ng + octile(n, goal), n});
+            }
         }
     }
-    return std::min(direct, via);
+    return path;  // empty: no path
 }
+////////
+
+//runs A* between outlets when necessary to rebuild the actual path
+// ^ rn the waypoints are only tracking outlets
+std::vector<Cell> build_plan_from_waypoints(const std::vector<Cell>& waypoints){
+    std::vector<Cell> plan;
+    if (waypoints.size() < 2) return plan;
+
+    for (size_t i = 0; i + 1 < waypoints.size(); i++) {
+        auto leg = astar_path(waypoints[i], waypoints[i + 1]);
+        if (leg.empty()) {plan.clear(); return plan;} /// aborting plan if the first part ends up failing yikes
+        //deduplicate
+        if (!plan.empty()) leg.erase(leg.begin());
+        plan.insert(plan.end(), leg.begin(), leg.end());
+    }
+    return plan;
+}
+
+
 
 //very self explanatory
 Cell nearest_reachable_outlet(const Cell& robot, int battery, bool& found) {
@@ -287,72 +389,11 @@ Cell nearest_reachable_outlet(const Cell& robot, int battery, bool& found) {
 }
 
 
-
-//this is NOT 3D A*!! - it's just A* that tracks battery alongside and breaks ties by higher remaining battery
-std::vector<Cell> astar_with_battery(const Cell& start, const Cell& goal, int start_battery) {
-    std::vector<Cell> path;
-    if (!traversable(start) || !traversable(goal)) return path;
-    std::unordered_map<Cell, int, CellHash>  g;
-    std::unordered_map<Cell, int, CellHash>  batt;
-    std::unordered_map<Cell, Cell, CellHash> parent;
- 
-    g[start] = 0;
-    batt[start] = start_battery;
-    std::priority_queue<PQNode, std::vector<PQNode>, std::greater<PQNode>> pq;
-    pq.push({octile(start, goal), -start_battery, start});
- 
-    //basic A* loop
-    while (!pq.empty()) {
-        PQNode top = pq.top(); pq.pop();
-        Cell c = top.c;
-        if (c == goal) {
-            for (Cell cur = goal;;) {
-                path.push_back(cur);
-                auto it = parent.find(cur);
-                if (it == parent.end()) break;
-                cur = it->second;
-            }
-            std::reverse(path.begin(), path.end());
-            return path;
-        }
-        //also store battery
-        int gc = g[c];
-        int bc = batt[c];
- 
-        for (int k = 0; k < 8; ++k) {
-            int nx = c.x + NDX[k], ny = c.y + NDY[k];
-            Cell n{nx, ny};
-            if (!traversable(n)) continue;
-            if (bc < STEP_COST) continue; //realistically just checking if 0
- 
-            int nb = bc - STEP_COST;
-            if (S.known_outlets.count(n)) nb = MAX_BATTERY;
-            int ng = gc + STEP_COST;
- 
-            auto itg = g.find(n);
-            auto itb = batt.find(n);
-            bool accept = false;
-            if (itg == g.end()) accept = true;
-            //weird structuring of normal A* check, asks if is better than prev g
-            else if (ng < itg->second) accept = true;
-            else if (ng == itg->second && nb > itb->second) accept = true;
- 
-            if (accept) {
-                g[n] = ng;
-                batt[n] = nb;
-                parent[n] = c;
-                pq.push({ng + octile(n, goal), -nb, n});
-            }
-        }
-    }
-    return path;
-}
-
 //super simple helper, just checking for # of non-sensed cells around a cell
 int information_gain(const Cell& f) {
 int count = 0;
-    for (int dx = -SENSOR_RAD; dx <= SENSOR_RAD; ++dx) {
-        for (int dy = -SENSOR_RAD; dy <= SENSOR_RAD; ++dy) {
+    for (int dx = -S.sensor_range; dx <= S.sensor_range; ++dx) {
+        for (int dy = -S.sensor_range; dy <= S.sensor_range; ++dy) {
             int x = f.x + dx, y = f.y + dy;
             if (in_bounds(x, y) && !S.sensed[idx(x, y)]) ++count;
         }
@@ -368,8 +409,8 @@ std::vector<Cell> compute_exploration_candidates(){
     for (int y = 1; y <= S.y_size; y++) {
         for (int x = 1; x <= S.x_size; x++) {
             if (S.sensed[idx(x, y)]) continue;
-            for (int dx = -SENSOR_RAD; dx <= SENSOR_RAD; ++dx) {
-                for (int dy = -SENSOR_RAD; dy <= SENSOR_RAD; ++dy) {
+            for (int dx = -S.sensor_range; dx <= S.sensor_range; ++dx) {
+                for (int dy = -S.sensor_range; dy <= S.sensor_range; ++dy) {
                     int cx = x + dx, cy = y + dy;
                     if (in_bounds(cx, cy) && traversable(cx, cy)) {
                         candidate[idx(cx, cy)] = 1;
@@ -387,95 +428,83 @@ std::vector<Cell> compute_exploration_candidates(){
 }
 
 
-//rn doing this explicitly instead of embedding in multigoal A* seach... maybe change later
-Cell select_best_exploration_target(const Cell& robot, int battery, bool& found){
-    //grab candidates - what are these?
-    // any traversable cell with positive gain where gain is # of unsensed cellsaround it
+struct FrontierChoice {
+    bool found = false;
+    Cell target{-1, -1};
+    std::vector<Cell> waypoints;
+};
+
+//returns target with the waypoint route to it
+//same as select best exploration with minor changes
+FrontierChoice select_best_exploration_target(const Cell& robot,
+    int battery, const std::vector<int>& from_robot) {
+
+    FrontierChoice choice;
     auto candidates = compute_exploration_candidates();
-    found = false;
-    Cell best{-1, -1};
     double best_score = -1.0;
-
-    /* MAKING THIS A VARIABLE SO THAT WE CAN CHANGE IT LATER */
-    /*LIKELY NOT NEEDED, REMOVE LATER*/
-    /////constexpr int RETREAT_MARGIN = 1;
-
-    //precomputing cost from robot to all cells don't know why we were checking A* for each candidate earlier
-    auto from_robot = bounded_dijkstra(robot, battery);
-
-
-    for (const Cell& f: candidates){
+    constexpr int RETREAT_MARGIN = 2;
+ 
+    for (const Cell& f: candidates) {
         if (f == robot) continue;
-
-        int f_i = idx(f.x, f.y);
-        int direct = from_robot[f_i]; //direct cost
-        int retreat = S.d_out[f_i]; //cost from f to nearest outlet
-
-        int via_outlet_cost = INF;
-        int via_outlet_arrival = -1; //arrival battery!
-        //checking the reachable cost but w precomputed stuff mostly
-        if (S.nearest_outlet_idx[f_i] >= 0){
-            int tail_idx = S.nearest_outlet_idx[f_i];
-            int tail = S.d_out[f_i];
-            for (int i = 0; i < static_cast<int>(S.outlet_list.size()); i++){
-                const Cell& oi = S.outlet_list[i];
-                int leg1 = from_robot[idx(oi.x, oi.y)];
-                if (leg1 >= INF) continue;
-                int middle = S.D_outlet[i][tail_idx];
-                if (middle >= INF) continue;
-                long long total = (long long)leg1 + middle + tail;
-                if (total < via_outlet_cost) via_outlet_cost = (int)total;
-            }
-            if (via_outlet_cost < INF) via_outlet_arrival = MAX_BATTERY - tail;
-        }
-
-
-        //////
-        int cost;
+        int fi = idx(f.x, f.y);
+ 
+        ReachableResult rr = reachable_cost_and_route(robot, f, battery, from_robot);
+        if (rr.cost >= INF || rr.cost == 0) continue;
+ 
+        // arrival is based on direct vs outlet
         int arrival_battery;
-        //CASE 1: direct path
-        //would be weird if direct were ever more than via outlet but just in case
-        if (direct < INF && direct <= via_outlet_cost){
-            cost = direct;
-            arrival_battery = battery - direct;
+        if (rr.waypoints.size() == 2) {
+            // direct path
+            arrival_battery = battery - rr.cost;
+        } else {
+            // via outlet chain: last hop is from final outlet to f
+            // starting fully charged.
+            const Cell& last_outlet = rr.waypoints[rr.waypoints.size() - 2];
+            int last_leg = octile(last_outlet, f);
+            // last_leg should equal d_out[fi] since we chose nearest outlet.
+            // use the precomputed value
+            arrival_battery = S.max_battery - S.d_out[fi];
+            (void)last_leg;
         }
-        //CASE 2: go through outlet network
-        else if (via_outlet_cost < INF){
-            cost = via_outlet_cost;
-            arrival_battery = via_outlet_arrival;
-        }
-        //CASE 3: not reachable
-        else {
-            continue;
-        }
-        if (cost == 0) continue;
-
-
-        ///actually checking if can retreat
+ 
+        int retreat = S.d_out[fi];
         if (retreat >= INF) continue;
-
-
-        //exploration budget after you arrive at cell
+        if (retreat + RETREAT_MARGIN > arrival_battery) continue;
+ 
         int exploration_budget = arrival_battery - retreat;
         if (exploration_budget < 0) exploration_budget = 0;
-        //trying to bias towards being able to explore more after arrival, hopefully not outweighting nearest
-        double lookahead_factor = 1.0 + static_cast<double>(exploration_budget) / MAX_BATTERY;
-
+        double lookahead_factor = 1.0 + static_cast<double>(exploration_budget) / S.max_battery;
+ 
         int gain = information_gain(f);
         if (gain == 0) continue;
-
-        double score = (static_cast<double>(gain) * lookahead_factor) / cost; //should i add prox back ??? 
-
-        if (score > best_score){
+ 
+        double score = (static_cast<double>(gain) * lookahead_factor) / rr.cost;
+        if (score > best_score) {
             best_score = score;
-            best = f;
-            found = true;
+            choice.found = true;
+            choice.target = f;
+            choice.waypoints = std::move(rr.waypoints);
         }
     }
-    return best;
+    return choice;
+    }
+
+struct OutletChoice {
+bool found = false;
+Cell outlet{-1, -1};
+std::vector<Cell> waypoints;
+};
+OutletChoice nearest_reachable_outlet(const Cell& robot,
+                                    const std::vector<int>& from_robot) {
+    OutletChoice c;
+    int best_d = INF;
+    for (const Cell& o : S.outlet_list) {
+        int d = from_robot[idx(o.x, o.y)];
+        if (d < best_d) { best_d = d; c.outlet = o; c.found = true; }
+    }
+    if (c.found) c.waypoints = {robot, c.outlet};
+    return c;
 }
-
-
 
 void next_action_from_plan(int rx, int ry, int* action_ptr) {
     action_ptr[0] = rx;
@@ -533,6 +562,8 @@ void planner(
     int robotposeX,
     int robotposeY,
     int current_charge,
+    int charge_max,
+    int detection_radius,
     int goalposeX,
     int goalposeY,
     int num_visible_chargers,
@@ -540,11 +571,6 @@ void planner(
     const int* visible_charger_y,
     int* action_ptr)
 {
-    //compiler warning nonsense
-    (void)current_charge;
-    (void)num_visible_chargers;
-    (void)visible_charger_x;
-    (void)visible_charger_y;
     ////// initializing things
     if (!S.initialized || S.x_size != x_size || S.y_size != y_size || S.map_copy_src != map) {
         S.x_size = x_size;
@@ -566,11 +592,14 @@ void planner(
         S.initialized = true;
     }
 
+    S.max_battery = charge_max;
+    S.sensor_range = detection_radius;
+
     //_______SECTION 1: just updating info based on new info ________________
 
     //updating sensed
-    for (int dx = -SENSOR_RAD; dx <= SENSOR_RAD; dx++){
-        for (int dy = -SENSOR_RAD; dy <= SENSOR_RAD; dy++){
+    for (int dx = -S.sensor_range; dx <= S.sensor_range; dx++){
+        for (int dy = -S.sensor_range; dy <= S.sensor_range; dy++){
             int x = robotposeX+dx, y = robotposeY+dy;
             if (in_bounds(x, y)) S.sensed[idx(x, y)] = 1;
         }
@@ -598,47 +627,48 @@ void planner(
     Cell goal {goalposeX,  goalposeY};
     int battery = current_charge;
     //recharging if on outlet
-    if (S.known_outlets.count(robot)) battery = MAX_BATTERY;
+    if (S.known_outlets.count(robot)) battery = S.max_battery;
+
+    //getting all distances from robot at once
+    std::vector<int> from_robot = bounded_dijkstra(robot, battery);
 
     //_________SECTION 3: goal is reachable path____________________
-    int goal_cost = reachable_cost(robot, goal, battery);
-    if (goal_cost < INF){
-        if (S.plan_target != goal || plan_is_invalid(robot)){ //change strats!
-            auto plan = astar_with_battery(robot, goal, battery);
-            S.current_plan = plan; //can i use std::move here? signal to compiler ?
-            S.plan_target = goal;
-            S.plan_valid = !S.current_plan.empty();
+    {
+        //now internally handles direct vs indirect path
+        ReachableResult rr = reachable_cost_and_route(robot, goal, battery, from_robot);
+        if (rr.cost < INF) {
+            if (S.plan_target != goal || plan_is_invalid(robot)) {
+                auto plan = build_plan_from_waypoints(rr.waypoints);
+                set_plan(std::move(plan), goal);
+            }
+            next_action_from_plan(robotposeX, robotposeY, action_ptr);
+            return;
+        }
+    }
+
+    //______SECTION 4: EXPLORE! ____________
+
+    FrontierChoice fc = select_best_exploration_target(robot, battery, from_robot);
+
+    if (fc.found) {
+        // if the target shifted since last call then we replan
+        if (fc.target != S.plan_target || plan_is_invalid(robot)) {
+            auto plan = build_plan_from_waypoints(fc.waypoints);
+            set_plan(std::move(plan), fc.target);
         }
         next_action_from_plan(robotposeX, robotposeY, action_ptr);
         return;
     }
-
-    //______SECTION 4: EXPLORE! ____________
-    bool found = false;
-    // the meat and gravy of it all! picking best target to navigate to.
-    Cell target = select_best_exploration_target(robot, battery, found);
-
-    if (!found) {
-        //retreat
-        bool ok = false;
-        Cell fallback = nearest_reachable_outlet(robot, battery, ok);
-        if (!ok || fallback == robot) { //already there ? 
-            action_ptr[0] = robotposeX;
-            action_ptr[1] = robotposeY;
-            return;
-        }
-        //plan back
-        if (S.plan_target != fallback || plan_is_invalid(robot)) {
-            auto plan = astar_with_battery(robot, fallback, battery);
-            set_plan(std::move(plan), fallback);
-        }
+    /// if no frontier choice is viable right now, need to retreat back to nearest outlet
+    OutletChoice oc = nearest_reachable_outlet(robot, from_robot);
+    if (!oc.found || oc.outlet == robot) {
+        action_ptr[0] = robotposeX;
+        action_ptr[1] = robotposeY;
+        return;
     }
-    else {
-        if (S.plan_target != target || plan_is_invalid(robot)) {
-            auto plan = astar_with_battery(robot, target, battery);
-            set_plan(std::move(plan), target);
-        }
+    if (S.plan_target != oc.outlet || plan_is_invalid(robot)) {
+        auto plan = build_plan_from_waypoints(oc.waypoints);
+        set_plan(std::move(plan), oc.outlet);
     }
-
     next_action_from_plan(robotposeX, robotposeY, action_ptr);
 }
