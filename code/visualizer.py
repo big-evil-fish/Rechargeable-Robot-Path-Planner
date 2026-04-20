@@ -27,7 +27,7 @@ def parse_mapfile(filename):
         numChargers = file.readline().strip()
         line = file.readline().strip()
         while line != 'G':
-            x, y = map(int, line.split(','))
+            y, x = map(int, line.split(','))
             x -=1
             y -=1
             chargers.append({'x': x, 'y': y})
@@ -100,13 +100,13 @@ if __name__ == "__main__":
 
     fig, ax = plt.subplots()
 
-    ax.matshow(costmap.T, zorder=0, cmap='binary')
-    ax.matshow(chargermap.T, zorder=1,cmap=ListedColormap([(0,0,0,0), (1,0,0,1), (1,0.8,0.6,1)]))
+    ax.matshow(costmap, zorder=0, cmap='binary')
+    ax.matshow(chargermap, zorder=1,cmap=ListedColormap([(0,0,0,0), (1,0,0,1), (1,0.84,0,1)]))
 
-    ax.imshow(knownMap.T, zorder=2, cmap=ListedColormap([(0,0,0,0.3), (1, 1, 1, 0.1)]))
+    ax.imshow(knownMap, zorder=2, cmap=ListedColormap([(0,0,0,0.3), (1, 1, 1, 0.1)]))
     
-    lc = colored_line_between_pts([p['y'] for p in robot_trajectory], 
-                                  [p['x'] for p in robot_trajectory], 
+    lc = colored_line_between_pts([p['x'] for p in robot_trajectory], 
+                                  [p['y'] for p in robot_trajectory], 
                                   [p['c'] for p in robot_trajectory], 
                                   ax, linewidth=4, cmap="winter", zorder=2)
 
