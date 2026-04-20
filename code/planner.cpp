@@ -442,7 +442,7 @@ FrontierChoice select_best_exploration_target(const Cell& robot,
     FrontierChoice choice;
     auto candidates = compute_exploration_candidates();
     double best_score = -1.0;
-    constexpr int RETREAT_MARGIN = 1;
+    constexpr int RETREAT_MARGIN = 0;
  
     for (const Cell& f: candidates) {
         if (f == robot) continue;
