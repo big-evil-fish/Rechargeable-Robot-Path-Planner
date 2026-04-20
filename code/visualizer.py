@@ -1,10 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 from matplotlib.animation import FuncAnimation
 from matplotlib.collections import LineCollection
 from matplotlib.colors import ListedColormap
 
-import sys
+import sys, time
 
 def parse_mapfile(filename):
     with open(filename, 'r') as file:
@@ -92,8 +93,6 @@ if __name__ == "__main__":
 
     x_size, y_size, robotX, robotY, robotC, robotCMax, goalX, goalY, sensorRange, chargers, costmap = parse_mapfile(sys.argv[1])
     knownMap = np.zeros_like(costmap)
-    chargermap = buildChargermap(chargers, costmap)
-    chargermap[goalX, goalY] = 2
     #print(chargermap)
 
     robot_trajectory = parse_robot_trajectory_file('robot_trajectory.txt')
@@ -141,13 +140,20 @@ if __name__ == "__main__":
         # known map visulization
         #knownMap = buildKnownMap(x, y, x_size, y_size, sensorRange)
         #print(sum(sum(knownMap)))
-
+        if frame >= (len(xarr) - 1)//SPEEDUP:
+            ani.pause()
         return (lc, sc)
 
+    def on_click(event):
+        ani.resume()
+    fig.canvas.mpl_connect('button_press_event', on_click)
     ani = FuncAnimation(fig, update, fargs=([p['x'] for p in robot_trajectory],
                         [p['y'] for p in robot_trajectory], x_size, y_size, sensorRange),
                         frames=(len(robot_trajectory) - 1)//SPEEDUP, init_func=init, blit=False,
                         interval=1)
+    ani.pause()
     plt.colorbar(lc)
     plt.show()
-    ani.save("myGIF.gif")
+
+    writer = animation.PillowWriter(fps=30)
+    #ani.save("myGIF.gif", writer=writer)
