@@ -101,14 +101,25 @@ if __name__ == "__main__":
     fig, ax = plt.subplots()
 
     ax.matshow(costmap, zorder=0, cmap='binary')
-    ax.matshow(chargermap, zorder=1,cmap=ListedColormap([(0,0,0,0), (1,0,0,1), (1,0.84,0,1)]))
 
-    ax.imshow(knownMap, zorder=2, cmap=ListedColormap([(0,0,0,0.3), (1, 1, 1, 0.1)]))
+    #ax.imshow(knownMap, zorder=2, cmap=ListedColormap([(0,0,0,0.3), (1, 1, 1, 0.1)]))
+
+    cxs = [c['x'] for c in chargers]
+    cys = [c['y'] for c in chargers]
+    if cxs:
+        ax.scatter(cxs, cys, c="blue", s=200, marker="*", zorder=3, label="chargers", edgecolors="k", linewidths=0.5)
+
+    ax.scatter([goalX], [goalY], c="gold", s=200, marker="s", zorder=4, label="goal", edgecolors="k", linewidths=0.5)
     
     lc = colored_line_between_pts([p['x'] for p in robot_trajectory], 
                                   [p['y'] for p in robot_trajectory], 
                                   [p['c'] for p in robot_trajectory], 
-                                  ax, linewidth=4, cmap="winter", zorder=2)
+                                  ax, linewidth=4, cmap="RdYlGn", zorder=3)
+    sc = ax.scatter([p['x'] for p in robot_trajectory], 
+                    [p['y'] for p in robot_trajectory], 
+                    c=[p['c'] for p in robot_trajectory], 
+                    cmap="RdYlGn", s=24, edgecolors="k",
+                    linewidths=0.4, zorder=4)
 
     def init():
         lc.set_segments([])
@@ -123,13 +134,15 @@ if __name__ == "__main__":
         y = yarr[:frame + 1]
         points = np.array([x, y]).T.reshape(-1, 1, 2)
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        data = np.stack([x, y]).T
+        sc.set_offsets(data)
         lc.set_segments(segments)
 
         # known map visulization
-        knownMap = buildKnownMap(x, y, x_size, y_size, sensorRange)
+        #knownMap = buildKnownMap(x, y, x_size, y_size, sensorRange)
         #print(sum(sum(knownMap)))
 
-        return (lc, knownMap)
+        return (lc, sc)
 
     ani = FuncAnimation(fig, update, fargs=([p['x'] for p in robot_trajectory],
                         [p['y'] for p in robot_trajectory], x_size, y_size, sensorRange),
