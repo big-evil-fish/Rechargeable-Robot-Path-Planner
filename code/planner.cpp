@@ -19,8 +19,7 @@
 #define RUNTEST_MAP_FREE 1
 
 //____ROBOT CONSTANTS_____
-constexpr int SENSOR_RAD = 2;
-constexpr int MAX_BATTERY = 100;
+// charge_max and sensor radius come from the map params passed to planner
 constexpr int STEP_COST = 1; //right now it's 1 for all neighbors
 // ^ if keeping this - switch to BFS
 constexpr int INF = std::numeric_limits<int>::max() / 4;
@@ -80,6 +79,8 @@ struct PlannerState{
     
     bool initialized = false;
     const int* map_copy_src = nullptr;
+    int charge_max = 1;
+    int detection_radius = 0;
 };
 
 PlannerState S;
@@ -169,13 +170,13 @@ void recompute_outlet_structures(){
         PQNode top = pq.top(); pq.pop();
         int ci = idx(top.c.x, top.c.y);
         if (top.f > S.d_out[ci]) continue;
-        if (top.f >= MAX_BATTERY) continue;
+        if (top.f >= S.charge_max) continue;
         for (int k = 0; k < 8; k++) {
             int nx = top.c.x + NDX[k], ny = top.c.y + NDY[k];
             if (!traversable(nx, ny)) continue;
             int ni = idx(nx, ny);
             int nd = top.f + STEP_COST;
-            if (nd <= MAX_BATTERY && nd < S.d_out[ni]) {
+            if (nd <= S.charge_max && nd < S.d_out[ni]) {
                 S.d_out[ni] = nd;
                 S.nearest_outlet_idx[ni] = S.nearest_outlet_idx[ci];
                 pq.push({nd, 0, {nx, ny}});
@@ -186,12 +187,12 @@ void recompute_outlet_structures(){
     std::vector<std::vector<int>> edges(O, std::vector<int>(O, INF));
     for (int i = 0; i < O; i++) edges[i][i] = 0;
     for (int i = 0; i < O; i++) {
-        auto dists = bounded_dijkstra(S.outlet_list[i], MAX_BATTERY);
+        auto dists = bounded_dijkstra(S.outlet_list[i], S.charge_max);
         for (int j = 0; j < O; j++) {
             if (i == j) continue;
             const Cell& oj = S.outlet_list[j];
             int d = dists[idx(oj.x, oj.y)];
-            if (d <= MAX_BATTERY) edges[i][j] = d;
+            if (d <= S.charge_max) edges[i][j] = d;
         }
     }
 
@@ -326,7 +327,7 @@ std::vector<Cell> astar_with_battery(const Cell& start, const Cell& goal, int st
             if (bc < STEP_COST) continue; //realistically just checking if 0
  
             int nb = bc - STEP_COST;
-            if (S.known_outlets.count(n)) nb = MAX_BATTERY;
+            if (S.known_outlets.count(n)) nb = S.charge_max;
             int ng = gc + STEP_COST;
  
             auto itg = g.find(n);
@@ -351,8 +352,8 @@ std::vector<Cell> astar_with_battery(const Cell& start, const Cell& goal, int st
 //super simple helper, just checking for # of non-sensed cells around a cell
 int information_gain(const Cell& f) {
 int count = 0;
-    for (int dx = -SENSOR_RAD; dx <= SENSOR_RAD; ++dx) {
-        for (int dy = -SENSOR_RAD; dy <= SENSOR_RAD; ++dy) {
+    for (int dx = -S.detection_radius; dx <= S.detection_radius; ++dx) {
+        for (int dy = -S.detection_radius; dy <= S.detection_radius; ++dy) {
             int x = f.x + dx, y = f.y + dy;
             if (in_bounds(x, y) && !S.sensed[idx(x, y)]) ++count;
         }
@@ -368,8 +369,8 @@ std::vector<Cell> compute_exploration_candidates(){
     for (int y = 1; y <= S.y_size; y++) {
         for (int x = 1; x <= S.x_size; x++) {
             if (S.sensed[idx(x, y)]) continue;
-            for (int dx = -SENSOR_RAD; dx <= SENSOR_RAD; ++dx) {
-                for (int dy = -SENSOR_RAD; dy <= SENSOR_RAD; ++dy) {
+            for (int dx = -S.detection_radius; dx <= S.detection_radius; ++dx) {
+                for (int dy = -S.detection_radius; dy <= S.detection_radius; ++dy) {
                     int cx = x + dx, cy = y + dy;
                     if (in_bounds(cx, cy) && traversable(cx, cy)) {
                         candidate[idx(cx, cy)] = 1;
@@ -426,7 +427,7 @@ Cell select_best_exploration_target(const Cell& robot, int battery, bool& found)
                 long long total = (long long)leg1 + middle + tail;
                 if (total < via_outlet_cost) via_outlet_cost = (int)total;
             }
-            if (via_outlet_cost < INF) via_outlet_arrival = MAX_BATTERY - tail;
+            if (via_outlet_cost < INF) via_outlet_arrival = S.charge_max - tail;
         }
 
 
@@ -459,7 +460,7 @@ Cell select_best_exploration_target(const Cell& robot, int battery, bool& found)
         int exploration_budget = arrival_battery - retreat;
         if (exploration_budget < 0) exploration_budget = 0;
         //trying to bias towards being able to explore more after arrival, hopefully not outweighting nearest
-        double lookahead_factor = 1.0 + static_cast<double>(exploration_budget) / MAX_BATTERY;
+        double lookahead_factor = 1.0 + static_cast<double>(exploration_budget) / S.charge_max;
 
         int gain = information_gain(f);
         if (gain == 0) continue;
@@ -533,6 +534,8 @@ void planner(
     int robotposeX,
     int robotposeY,
     int current_charge,
+    int charge_max,
+    int detection_radius,
     int goalposeX,
     int goalposeY,
     int num_visible_chargers,
@@ -540,11 +543,9 @@ void planner(
     const int* visible_charger_y,
     int* action_ptr)
 {
-    //compiler warning nonsense
-    (void)current_charge;
-    (void)num_visible_chargers;
-    (void)visible_charger_x;
-    (void)visible_charger_y;
+    S.charge_max = std::max(1, charge_max);
+    S.detection_radius = std::max(0, detection_radius);
+
     ////// initializing things
     if (!S.initialized || S.x_size != x_size || S.y_size != y_size || S.map_copy_src != map) {
         S.x_size = x_size;
@@ -569,8 +570,8 @@ void planner(
     //_______SECTION 1: just updating info based on new info ________________
 
     //updating sensed
-    for (int dx = -SENSOR_RAD; dx <= SENSOR_RAD; dx++){
-        for (int dy = -SENSOR_RAD; dy <= SENSOR_RAD; dy++){
+    for (int dx = -S.detection_radius; dx <= S.detection_radius; dx++){
+        for (int dy = -S.detection_radius; dy <= S.detection_radius; dy++){
             int x = robotposeX+dx, y = robotposeY+dy;
             if (in_bounds(x, y)) S.sensed[idx(x, y)] = 1;
         }
@@ -597,8 +598,6 @@ void planner(
     Cell robot{robotposeX, robotposeY};
     Cell goal {goalposeX,  goalposeY};
     int battery = current_charge;
-    //recharging if on outlet
-    if (S.known_outlets.count(robot)) battery = MAX_BATTERY;
 
     //_________SECTION 3: goal is reachable path____________________
     int goal_cost = reachable_cost(robot, goal, battery);
