@@ -27,7 +27,7 @@ def parse_mapfile(filename):
         numChargers = file.readline().strip()
         line = file.readline().strip()
         while line != 'G':
-            y, x = map(int, line.split(','))
+            x, y = map(int, line.split(','))
             x -=1
             y -=1
             chargers.append({'x': x, 'y': y})
