@@ -39,7 +39,7 @@ def parse_mapfile(filename):
         assert file.readline().strip() == 'M', "Expected 'M'"
         costmap_ = []
         for line in file:
-            row = list(map(float, line.strip().split(',')))
+            row = list(map(int, line.strip().split(',')))
             costmap_.append(row)
 
         costmap_ = np.asarray(costmap_).T
