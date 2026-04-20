@@ -74,6 +74,16 @@ def buildChargermap(chargers, costmap):
         chargermap[charger['x'], charger['y']] = 1
     return chargermap
 
+def buildKnownMap(x, y, x_size, y_size, sensorRange):
+    knownMap = np.zeros((x_size, y_size))
+    for pos in range(1, len(x)):
+        for i in range(-1*sensorRange, 1+ sensorRange):
+            for j in range(-1*sensorRange, 1+ sensorRange):
+                if (x[pos]+i)>=0 and (x[pos]+i)<x_size \
+                    and (y[pos]+j)>=0 and (y[pos]+j)<y_size:
+                    knownMap[x[pos]+i, y[pos]+j]=1
+    return knownMap
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
@@ -93,8 +103,8 @@ if __name__ == "__main__":
     ax.matshow(costmap.T, zorder=0, cmap='binary')
     ax.matshow(chargermap.T, zorder=1,cmap=ListedColormap([(0,0,0,0), (1,0,0,1), (1,0.8,0.6,1)]))
 
-    ax.imshow(knownMap.T, zorder=2, cmap=ListedColormap([(0,0,0,0.3), (0, 0, 0, 0)]))
-
+    ax.imshow(knownMap.T, zorder=2, cmap=ListedColormap([(0,0,0,0.3), (1, 1, 1, 0.1)]))
+    
     lc = colored_line_between_pts([p['y'] for p in robot_trajectory], 
                                   [p['x'] for p in robot_trajectory], 
                                   [p['c'] for p in robot_trajectory], 
@@ -102,9 +112,10 @@ if __name__ == "__main__":
 
     def init():
         lc.set_segments([])
-        return lc
+        knownMap = np.zeros_like(costmap)
+        return lc, knownMap
 
-    def update(frame, xarr, yarr, knownMap, x_size, y_size, sensorRange):
+    def update(frame, xarr, yarr, x_size, y_size, sensorRange):
         frame = frame+1 if SPEEDUP == 1 else frame*SPEEDUP
         
         # multicolor line following robot path
@@ -114,23 +125,16 @@ if __name__ == "__main__":
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
         lc.set_segments(segments)
 
-        #x=x[-1]
-        #y=y[-1]
-        #print(f"{x}, {y}")
         # known map visulization
-        for pos in range(1, frame+1):
-            for i in range(-1*sensorRange, 1+ sensorRange):
-                for j in range(-1*sensorRange, 1+ sensorRange):
-                    if (x[pos]+i)>=0 and (x[pos]+i)<x_size-1 \
-                        and (y[pos]+j)>=0 and (y[pos]+j)<y_size-1:
-                        knownMap[x[pos]+i, y[pos]+j]=1
+        knownMap = buildKnownMap(x, y, x_size, y_size, sensorRange)
+        #print(sum(sum(knownMap)))
 
-        return lc, knownMap
+        return (lc, knownMap)
 
     ani = FuncAnimation(fig, update, fargs=([p['x'] for p in robot_trajectory],
-                        [p['y'] for p in robot_trajectory], knownMap, x_size, y_size, sensorRange),
+                        [p['y'] for p in robot_trajectory], x_size, y_size, sensorRange),
                         frames=(len(robot_trajectory) - 1)//SPEEDUP, init_func=init, blit=False,
                         interval=1)
-
+    plt.colorbar(lc)
     plt.show()
     ani.save("myGIF.gif")
