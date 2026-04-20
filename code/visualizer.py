@@ -60,7 +60,7 @@ def parse_robot_trajectory_file(filename):
 
     return robot_traj
 
-SPEEDUP = 1
+SPEEDUP = 3
 
 def colored_line_between_pts(x, y, c, ax, **lc_kwargs):
         points = np.array([x, y]).T.reshape(-1, 1, 2)
@@ -144,8 +144,10 @@ if __name__ == "__main__":
         # known map visulization
         #knownMap = buildKnownMap(x, y, x_size, y_size, sensorRange)
         #print(sum(sum(knownMap)))
+        """
         if frame >= (len(xarr) - 1)//SPEEDUP:
             ani.pause()
+        """
         return (lc, sc)
 
     def on_click(event):
@@ -155,9 +157,8 @@ if __name__ == "__main__":
                         [p['y'] for p in robot_trajectory], x_size, y_size, sensorRange),
                         frames=(len(robot_trajectory) - 1)//SPEEDUP, init_func=init, blit=False,
                         interval=1)
-    ani.pause()
     plt.colorbar(lc)
     plt.show()
 
     writer = animation.PillowWriter(fps=30)
-    #ani.save(str(gif_path), writer=writer)
+    ani.save(str(gif_path), writer=writer)
