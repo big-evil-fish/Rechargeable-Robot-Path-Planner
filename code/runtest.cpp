@@ -207,8 +207,8 @@ int main(int argc, char *argv[])
         const int* pdx = n_detected ? detected_x.data() : nullptr;
         const int* pdy = n_detected ? detected_y.data() : nullptr;
 
-        planner(map, x_size, y_size, robotposeX, robotposeY, charge, goalposeX, goalposeY,
-                n_detected, pdx, pdy, action_ptr);
+        planner(map, x_size, y_size, robotposeX, robotposeY, charge, charge_max, detection_radius,
+                goalposeX, goalposeY, n_detected, pdx, pdy, action_ptr);
         newrobotposeX = action_ptr[0];
         newrobotposeY = action_ptr[1];
 
@@ -260,17 +260,38 @@ int main(int argc, char *argv[])
 
         output_file << curr_time << "," << robotposeX << "," << robotposeY << "," << charge << std::endl;
 
-        if (charge <= 0)
+        const float thresh = 0.5f;
+        const bool at_goal =
+            abs(robotposeX - goalposeX) <= thresh && abs(robotposeY - goalposeY) <= thresh;
+
+        // "Dead on arrival": battery 0 on the goal still counts as success (last step spent arriving).
+        if (charge <= 0 && !at_goal)
         {
             std::cout << "ERROR: out of charge\n" << std::endl;
             return -1;
         }
 
-        float thresh = 0.5;
         std::cout << "goal pose: (" << goalposeX << ", " << goalposeY << ")" << std::endl;
         std::cout << "robot pose: (" << robotposeX << ", " << robotposeY << ")" << std::endl;
         std::cout << "Time: " << curr_time << "  battery: " << charge << std::endl;
-        if (abs(robotposeX - goalposeX) <= thresh && abs(robotposeY - goalposeY) <= thresh)
+        std::cout << "detected chargers: ";
+        bool any_det = false;
+        for (int i = 0; i < num_charger; ++i)
+        {
+            int dx = std::abs(charger_x[i] - robotposeX);
+            int dy = std::abs(charger_y[i] - robotposeY);
+            if (std::max(dx, dy) <= detection_radius)
+            {
+                if (any_det)
+                    std::cout << "; ";
+                any_det = true;
+                std::cout << "(" << charger_x[i] << ", " << charger_y[i] << ")";
+            }
+        }
+        if (!any_det)
+            std::cout << "(none)";
+        std::cout << std::endl;
+        if (at_goal)
         {
             goal_reached = true;
             break;

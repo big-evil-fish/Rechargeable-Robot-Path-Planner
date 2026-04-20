@@ -374,6 +374,20 @@ std::vector<Cell> build_plan_from_waypoints(const std::vector<Cell>& waypoints){
 
 
 
+//very self explanatory
+Cell nearest_reachable_outlet(const Cell& robot, int battery, bool& found) {
+    found = false;
+    Cell best{-1, -1};
+    int  best_d = INF;
+    auto from_r = bounded_dijkstra(robot, battery);
+    for (const Cell& o : S.outlet_list) {
+        int d = from_r[idx(o.x, o.y)];
+        if (d < best_d) {best_d = d; best = o; found = true;}
+    }
+    return best;
+}
+
+
 //super simple helper, just checking for # of non-sensed cells around a cell
 int information_gain(const Cell& f) {
 int count = 0;
