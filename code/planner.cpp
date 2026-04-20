@@ -442,7 +442,7 @@ FrontierChoice select_best_exploration_target(const Cell& robot,
     FrontierChoice choice;
     auto candidates = compute_exploration_candidates();
     double best_score = -1.0;
-    constexpr int RETREAT_MARGIN = 2;
+    constexpr int RETREAT_MARGIN = 1;
  
     for (const Cell& f: candidates) {
         if (f == robot) continue;
@@ -614,7 +614,7 @@ void planner(
     //_________SECTION 2: updating outlet path knowledge _____________
     //we're keeping track of shortest paths between outlets but these may update
     if (S.known_outlets.size() != S.last_outlet_set.size()) {
-        std::cout << "New outlet found!";
+        std::cout << "New outlet found!" << '\n';
         recompute_outlet_structures();
         S.last_outlet_set = S.known_outlets;
         //need to replan if new outlet discovered
